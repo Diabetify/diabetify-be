@@ -1,0 +1,31 @@
+services:
+  diabetify-db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - "./database/script:/docker-entrypoint-initdb.d"
+
+  diabetify-be: 
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      APP_ENV: ${APP_ENV}
+      DB_HOST: diabetify-db
+      DB_PORT: 5432 
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SSLMODE: ${DB_SSLMODE}
+      DB_TIMEZONE: ${DB_TIMEZONE}
+    ports:
+      - "${APP_PORT}:8080"
+    depends_on:
+      - diabetify-db
