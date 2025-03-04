@@ -17,10 +17,14 @@ func main() {
 	userRepo := repository.NewUserRepository()
 	userController := controllers.NewUserController(userRepo)
 
+	verificationRepo := repository.NewVerificationRepository()
+	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)
+
 	router := gin.Default()
 
 	// Register user routes
 	routes.RegisterUserRoutes(router, userController)
+	routes.RegisterVerificationRoutes(router, verificationController)
 
 	// Start the server
 	log.Println("Server is running on port 8080...")

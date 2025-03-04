@@ -16,7 +16,7 @@ var DB *gorm.DB
 
 func ConnectDatabase() {
 	// Load .env file
-	if err := godotenv.Load(); err != nil {
+	if err := godotenv.Load("../.env"); err != nil {
 		log.Println("Warning: No .env file found, using system environment variables")
 	}
 
@@ -46,4 +46,5 @@ func ConnectDatabase() {
 
 	// Auto-migrate models
 	DB.AutoMigrate(&models.User{})
+	DB.AutoMigrate(&models.Verification{})
 }

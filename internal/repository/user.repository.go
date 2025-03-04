@@ -12,6 +12,7 @@ func NewUserRepository() *UserRepository {
 }
 
 func (ur *UserRepository) CreateUser(user *models.User) error {
+	user.Verified = false
 	return database.DB.Create(user).Error
 }
 
@@ -33,4 +34,17 @@ func (ur *UserRepository) UpdateUser(user *models.User) error {
 
 func (ur *UserRepository) DeleteUser(id uint) error {
 	return database.DB.Delete(&models.User{}, id).Error
+}
+
+func (ur *UserRepository) SetUserVerified(email string) error {
+	return database.DB.Model(&models.User{}).Where("email = ?", email).Update("verified", true).Error
+}
+
+func (ur *UserRepository) IsUserVerified(email string) (bool, error) {
+	var user models.User
+	err := database.DB.Select("verified").Where("email = ?", email).First(&user).Error
+	if err != nil {
+		return false, err
+	}
+	return user.Verified, nil
 }
