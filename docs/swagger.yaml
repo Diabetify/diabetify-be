@@ -1,0 +1,333 @@
+definitions:
+  controllers.EmailRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  controllers.VerificationRequest:
+    properties:
+      code:
+        type: string
+      email:
+        type: string
+    required:
+    - code
+    - email
+    type: object
+  models.User:
+    description: User model for the system
+    properties:
+      age:
+        example: 30
+        type: integer
+      cholesterol:
+        example: true
+        type: boolean
+      created_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+      disturbed_vision:
+        example: false
+        type: boolean
+      email:
+        example: john.doe@example.com
+        type: string
+      height:
+        example: 175
+        type: integer
+      hipertension:
+        example: false
+        type: boolean
+      id:
+        example: 1
+        type: integer
+      name:
+        example: John Doe
+        type: string
+      password:
+        example: securepassword123
+        type: string
+      updated_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+      verified:
+        example: false
+        type: boolean
+      weight:
+        example: 70
+        type: integer
+    type: object
+info:
+  contact: {}
+paths:
+  /users:
+    post:
+      consumes:
+      - application/json
+      description: Create a user with the provided data
+      parameters:
+      - description: User data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.User'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: User registered successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to create user
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Create a new user
+      tags:
+      - users
+  /users/{id}:
+    delete:
+      description: Delete user by ID
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User deleted successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid user ID
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to delete user
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Delete a user
+      tags:
+      - users
+    get:
+      description: Retrieve user information by user ID
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid user ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get a user by ID
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update user information
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: User data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.User'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User updated successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to update user
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Update a user
+      tags:
+      - users
+  /users/email/{email}:
+    get:
+      description: Retrieve user information by email
+      parameters:
+      - description: User email
+        in: path
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get a user by email
+      tags:
+      - users
+  /verify:
+    post:
+      consumes:
+      - application/json
+      description: Verifies the provided code for the user's email
+      parameters:
+      - description: Verification details
+        in: body
+        name: verification
+        required: true
+        schema:
+          $ref: '#/definitions/controllers.VerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification successful
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Invalid or expired verification code
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to verify user
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Verify a user's verification code
+      tags:
+      - verification
+  /verify/resend:
+    post:
+      consumes:
+      - application/json
+      description: Resends the verification code to the user's email
+      parameters:
+      - description: User email
+        in: body
+        name: email
+        required: true
+        schema:
+          $ref: '#/definitions/controllers.EmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification code resent successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to create verification code
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Resend the verification code
+      tags:
+      - verification
+  /verify/send:
+    post:
+      consumes:
+      - application/json
+      description: Sends a 6-digit verification code to the specified email address
+      parameters:
+      - description: User email
+        in: body
+        name: email
+        required: true
+        schema:
+          $ref: '#/definitions/controllers.EmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification code sent successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to create verification code
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Send a verification code to user's email
+      tags:
+      - verification
+swagger: "2.0"

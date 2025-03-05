@@ -1,17 +1,26 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"time"
 
+	"gorm.io/gorm"
+)
+
+// User represents a system user
+// @description User model for the system
 type User struct {
-	gorm.Model
-	Name            string
-	Email           string `gorm:"unique"`
-	Password        string
-	Age             int
-	Hipertension    bool
-	Cholesterol     bool
-	DisturbedVision bool
-	Weight          int
-	Height          int
-	Verified        bool `gorm:"default:false"`
+	ID              uint           `gorm:"primaryKey" json:"id" example:"1"`
+	CreatedAt       time.Time      `json:"created_at" example:"2023-01-01T00:00:00Z"`
+	UpdatedAt       time.Time      `json:"updated_at" example:"2023-01-01T00:00:00Z"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-" swaggerignore:"true"`
+	Name            string         `json:"name" example:"John Doe"`
+	Email           string         `gorm:"unique" json:"email" example:"john.doe@example.com"`
+	Password        string         `json:"password" example:"securepassword123"`
+	Age             int            `json:"age" example:"30"`
+	Hipertension    bool           `json:"hipertension" example:"false"`
+	Cholesterol     bool           `json:"cholesterol" example:"true"`
+	DisturbedVision bool           `json:"disturbed_vision" example:"false"`
+	Weight          int            `json:"weight" example:"70"`
+	Height          int            `json:"height" example:"175"`
+	Verified        bool           `gorm:"default:false" json:"verified" example:"false"`
 }

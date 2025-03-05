@@ -7,10 +7,18 @@ import (
 	"diabetify/routes"
 	"log"
 
+	"diabetify/docs"
+
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	// Swagger Documentation
+	docs.SwaggerInfo.Title = "Diabetify API"
+	docs.SwaggerInfo.Description = "This is api of Diabetify App."
+	docs.SwaggerInfo.Version = "1.0"
+	docs.SwaggerInfo.Schemes = []string{"http", "https"}
+
 	// Connect to the database
 	database.ConnectDatabase()
 
@@ -25,6 +33,7 @@ func main() {
 	// Register user routes
 	routes.RegisterUserRoutes(router, userController)
 	routes.RegisterVerificationRoutes(router, verificationController)
+	routes.RegisterSwaggerRoutes(router)
 
 	// Start the server
 	log.Println("Server is running on port 8080...")

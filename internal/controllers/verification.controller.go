@@ -11,6 +11,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type EmailRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type VerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Code  string `json:"code" binding:"required"`
+}
+
 type VerificationController struct {
 	verificationRepo *repository.VerificationRepository
 	userRepo         *repository.UserRepository
@@ -26,10 +35,20 @@ func NewVerificationController(verificationRepo *repository.VerificationReposito
 	}
 }
 
+// SendVerificationCode godoc
+// @Summary Send a verification code to user's email
+// @Description Sends a 6-digit verification code to the specified email address
+// @Tags verification
+// @Accept json
+// @Produce json
+// @Param email body EmailRequest true "User email"
+// @Success 200 {object} map[string]interface{} "Verification code sent successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Failure 500 {object} map[string]interface{} "Failed to create verification code"
+// @Router /verify/send [post]
 func (vc *VerificationController) SendVerificationCode(c *gin.Context) {
-	var req struct {
-		Email string `json:"email" binding:"required,email"`
-	}
+	var req EmailRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -86,11 +105,20 @@ func (vc *VerificationController) SendVerificationCode(c *gin.Context) {
 	})
 }
 
+// VerifyCode godoc
+// @Summary Verify a user's verification code
+// @Description Verifies the provided code for the user's email
+// @Tags verification
+// @Accept json
+// @Produce json
+// @Param verification body VerificationRequest true "Verification details"
+// @Success 200 {object} map[string]interface{} "Verification successful"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 401 {object} map[string]interface{} "Invalid or expired verification code"
+// @Failure 500 {object} map[string]interface{} "Failed to verify user"
+// @Router /verify [post]
 func (vc *VerificationController) VerifyCode(c *gin.Context) {
-	var req struct {
-		Email string `json:"email" binding:"required,email"`
-		Code  string `json:"code" binding:"required"`
-	}
+	var req VerificationRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -129,6 +157,18 @@ func (vc *VerificationController) VerifyCode(c *gin.Context) {
 	})
 }
 
+// ResendVerificationCode godoc
+// @Summary Resend the verification code
+// @Description Resends the verification code to the user's email
+// @Tags verification
+// @Accept json
+// @Produce json
+// @Param email body EmailRequest true "User email"
+// @Success 200 {object} map[string]interface{} "Verification code resent successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Failure 500 {object} map[string]interface{} "Failed to create verification code"
+// @Router /verify/resend [post]
 func (vc *VerificationController) ResendVerificationCode(c *gin.Context) {
 	vc.SendVerificationCode(c)
 }

@@ -16,6 +16,18 @@ type UserController struct {
 func NewUserController(repo *repository.UserRepository) *UserController {
 	return &UserController{repo: repo}
 }
+
+// CreateUser godoc
+// @Summary Create a new user
+// @Description Create a user with the provided data
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user body models.User true "User data"
+// @Success 201 {object} map[string]interface{} "User registered successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 500 {object} map[string]interface{} "Failed to create user"
+// @Router /users [post]
 func (uc *UserController) CreateUser(c *gin.Context) {
 	var user models.User
 
@@ -46,6 +58,15 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 	})
 }
 
+// GetUserByEmail godoc
+// @Summary Get a user by email
+// @Description Retrieve user information by email
+// @Tags users
+// @Produce json
+// @Param email path string true "User email"
+// @Success 200 {object} map[string]interface{} "User retrieved successfully"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Router /users/email/{email} [get]
 func (uc *UserController) GetUserByEmail(c *gin.Context) {
 	email := c.Param("email")
 
@@ -66,6 +87,16 @@ func (uc *UserController) GetUserByEmail(c *gin.Context) {
 	})
 }
 
+// GetUserByID godoc
+// @Summary Get a user by ID
+// @Description Retrieve user information by user ID
+// @Tags users
+// @Produce json
+// @Param id path int true "User ID"
+// @Success 200 {object} map[string]interface{} "User retrieved successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid user ID"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Router /users/{id} [get]
 func (uc *UserController) GetUserByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -94,6 +125,18 @@ func (uc *UserController) GetUserByID(c *gin.Context) {
 	})
 }
 
+// UpdateUser godoc
+// @Summary Update a user
+// @Description Update user information
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Param user body models.User true "User data"
+// @Success 200 {object} map[string]interface{} "User updated successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 500 {object} map[string]interface{} "Failed to update user"
+// @Router /users/{id} [put]
 func (uc *UserController) UpdateUser(c *gin.Context) {
 	var user models.User
 
@@ -122,6 +165,16 @@ func (uc *UserController) UpdateUser(c *gin.Context) {
 	})
 }
 
+// DeleteUser godoc
+// @Summary Delete a user
+// @Description Delete user by ID
+// @Tags users
+// @Produce json
+// @Param id path int true "User ID"
+// @Success 200 {object} map[string]interface{} "User deleted successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid user ID"
+// @Failure 500 {object} map[string]interface{} "Failed to delete user"
+// @Router /users/{id} [delete]
 func (uc *UserController) DeleteUser(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
