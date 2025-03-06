@@ -5,8 +5,6 @@ import (
 	"log"
 	"net/smtp"
 	"os"
-
-	"github.com/joho/godotenv"
 )
 
 type MailConfig struct {
@@ -18,10 +16,6 @@ type MailConfig struct {
 }
 
 func LoadMailConfig() MailConfig {
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Println("Warning: No .env file found")
-	}
-
 	config := MailConfig{
 		SMTPHost: os.Getenv("SMTP_HOST"),
 		SMTPPort: os.Getenv("SMTP_PORT"),

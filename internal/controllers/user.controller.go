@@ -4,9 +4,13 @@ import (
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserController struct {
@@ -15,6 +19,11 @@ type UserController struct {
 
 func NewUserController(repo *repository.UserRepository) *UserController {
 	return &UserController{repo: repo}
+}
+
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required"`
+	Password string `json:"password" binding:"required"`
 }
 
 // CreateUser godoc
@@ -39,6 +48,16 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 		})
 		return
 	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to hash password",
+			"error":   err.Error(),
+		})
+		return
+	}
+	user.Password = string(hashedPassword)
 
 	user.Verified = false
 
@@ -199,5 +218,70 @@ func (uc *UserController) DeleteUser(c *gin.Context) {
 		"status":  "success",
 		"message": "User deleted successfully",
 		"data":    nil,
+	})
+}
+
+// LoginUser godoc
+// @Summary Login a user
+// @Description Authenticate user credentials
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param login body LoginRequest true "Email and Password"
+// @Success 200 {object} map[string]interface{} "User logged in successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Router /users/login [post]
+func (uc *UserController) LoginUser(c *gin.Context) {
+	var loginRequest LoginRequest
+	if err := c.ShouldBindJSON(&loginRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid request data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	user, err := uc.repo.GetUserByEmail(loginRequest.Email)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User not found",
+			"error":   "No user associated with this email",
+		})
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginRequest.Password))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized",
+			"error":   "Invalid email or password",
+		})
+		return
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"exp":     time.Now().Add(time.Hour * 72).Unix(),
+	})
+	jwtSecret := []byte(os.Getenv("JWT_SECRET_KEY"))
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Could not generate token",
+			"error":   err.Error(),
+		})
+		return
+	}
+	// Authentication is successful
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "User logged in successfully",
+		"data":    tokenString,
 	})
 }

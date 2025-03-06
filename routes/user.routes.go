@@ -14,5 +14,8 @@ func RegisterUserRoutes(router *gin.Engine, userController *controllers.UserCont
 		userRoutes.GET("/email/:email", userController.GetUserByEmail)
 		userRoutes.PUT("/:id", userController.UpdateUser)
 		userRoutes.DELETE("/:id", userController.DeleteUser)
+
+		// Auth
+		userRoutes.POST("/login", userController.LoginUser)
 	}
 }

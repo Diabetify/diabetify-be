@@ -7,7 +7,6 @@ import (
 
 	"diabetify/internal/models"
 
-	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -15,11 +14,6 @@ import (
 var DB *gorm.DB
 
 func ConnectDatabase() {
-	// Load .env file
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Println("Warning: No .env file found, using system environment variables")
-	}
-
 	// Read environment variables
 	host := os.Getenv("DB_HOST")
 	user := os.Getenv("DB_USER")
