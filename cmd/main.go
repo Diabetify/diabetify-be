@@ -28,8 +28,9 @@ func main() {
 	// Connect to the database
 	database.ConnectDatabase()
 
+	forgotPasswordRepo := repository.NewResetPasswordRepository()
 	userRepo := repository.NewUserRepository()
-	userController := controllers.NewUserController(userRepo)
+	userController := controllers.NewUserController(userRepo, forgotPasswordRepo)
 
 	verificationRepo := repository.NewVerificationRepository()
 	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)

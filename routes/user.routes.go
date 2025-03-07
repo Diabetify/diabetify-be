@@ -17,5 +17,7 @@ func RegisterUserRoutes(router *gin.Engine, userController *controllers.UserCont
 
 		// Auth
 		userRoutes.POST("/login", userController.LoginUser)
+		userRoutes.POST("/reset-password", userController.ForgotPassword)
+		userRoutes.POST("/change-password", userController.ResetPassword)
 	}
 }

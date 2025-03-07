@@ -3,6 +3,8 @@ package controllers
 import (
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
+	"diabetify/internal/utils"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -14,16 +16,27 @@ import (
 )
 
 type UserController struct {
-	repo *repository.UserRepository
+	repo    *repository.UserRepository
+	rp_repo *repository.ResetPasswordRepository
 }
 
-func NewUserController(repo *repository.UserRepository) *UserController {
-	return &UserController{repo: repo}
+func NewUserController(repo *repository.UserRepository, rp_repo *repository.ResetPasswordRepository) *UserController {
+	return &UserController{repo: repo, rp_repo: rp_repo}
 }
 
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required"`
 	Password string `json:"password" binding:"required"`
+}
+
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required"`
+}
+
+type ResetPasswordRequest struct {
+	Email       string `json:"email" binding:"required,email"`
+	Code        string `json:"code" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required"`
 }
 
 // CreateUser godoc
@@ -283,5 +296,165 @@ func (uc *UserController) LoginUser(c *gin.Context) {
 		"status":  "success",
 		"message": "User logged in successfully",
 		"data":    tokenString,
+	})
+}
+
+// ForgotPassword godoc
+// @Summary Request password reset code
+// @Description Send a verification code to user's email for password reset
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param forgotPassword body ForgotPasswordRequest true "User Email"
+// @Success 200 {object} map[string]interface{} "Code sent successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data or email does not exist"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /users/forgot-password [post]
+func (uc *UserController) ForgotPassword(c *gin.Context) {
+	var req ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid request data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if _, err := uc.repo.GetUserByEmail(req.Email); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Email's does not exist",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	mailConfig := utils.LoadMailConfig()
+	code := utils.GenerateVerificationCode()
+
+	// Delete if any code from the previous one still exist
+	uc.rp_repo.DeleteByEmail(req.Email)
+
+	forget_password := &models.ResetPassword{
+		Email:     req.Email,
+		Code:      code,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	if err := uc.rp_repo.CreateResetPassword(forget_password); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to create forget password code",
+			"error":   "Database error",
+		})
+		return
+	}
+
+	go func() {
+		if err := utils.SendEmail(mailConfig, req.Email, "Reset Password", "Use this code to reset your password :  "+code); err != nil {
+			log.Printf("Failed to send email to %s: %v", req.Email, err)
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Code sent successfully",
+		"data":    nil,
+	})
+}
+
+// ResetPassword godoc
+// @Summary Reset user password
+// @Description Reset user password using verification code
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param resetPassword body ResetPasswordRequest true "Email, Code, and New Password"
+// @Success 200 {object} map[string]interface{} "Password has been reset successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data, code expired, or invalid password"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /users/reset-password [post]
+func (uc *UserController) ResetPassword(c *gin.Context) {
+	var req ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid request data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	resetRecord, err := uc.rp_repo.FindByEmailAndCode(req.Email, req.Code)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid or expired code",
+			"error":   "Code not found",
+		})
+		return
+	}
+
+	if time.Now().After(resetRecord.ExpiresAt) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Code has expired",
+			"error":   "Expired code",
+		})
+		return
+	}
+
+	user, err := uc.repo.GetUserByEmail(req.Email)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User not found",
+			"error":   "User does not exist",
+		})
+		return
+	}
+
+	// Validate password
+	if len(req.NewPassword) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Password must be at least 8 characters",
+			"error":   "Invalid password",
+		})
+		return
+	}
+
+	// Hash the new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to hash password",
+			"error":   "Internal server error",
+		})
+		return
+	}
+
+	user.Password = string(hashedPassword)
+	if err := uc.repo.UpdateUser(user); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to update password",
+			"error":   "Database error",
+		})
+		return
+	}
+
+	// Delete reset password code
+	if err := uc.rp_repo.DeleteByEmail(req.Email); err != nil {
+		log.Printf("Failed to delete reset password code for %s: %v", req.Email, err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Password has been reset successfully",
+		"data":    nil,
 	})
 }

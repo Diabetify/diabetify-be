@@ -6,6 +6,13 @@ definitions:
     required:
     - email
     type: object
+  controllers.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
   controllers.LoginRequest:
     properties:
       email:
@@ -15,6 +22,19 @@ definitions:
     required:
     - email
     - password
+    type: object
+  controllers.ResetPasswordRequest:
+    properties:
+      code:
+        type: string
+      email:
+        type: string
+      new_password:
+        type: string
+    required:
+    - code
+    - email
+    - new_password
     type: object
   controllers.VerificationRequest:
     properties:
@@ -226,6 +246,39 @@ paths:
       summary: Get a user by email
       tags:
       - users
+  /users/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Send a verification code to user's email for password reset
+      parameters:
+      - description: User Email
+        in: body
+        name: forgotPassword
+        required: true
+        schema:
+          $ref: '#/definitions/controllers.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Code sent successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data or email does not exist
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Request password reset code
+      tags:
+      - users
   /users/login:
     post:
       consumes:
@@ -262,6 +315,44 @@ paths:
             additionalProperties: true
             type: object
       summary: Login a user
+      tags:
+      - users
+  /users/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Reset user password using verification code
+      parameters:
+      - description: Email, Code, and New Password
+        in: body
+        name: resetPassword
+        required: true
+        schema:
+          $ref: '#/definitions/controllers.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Password has been reset successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data, code expired, or invalid password
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Reset user password
       tags:
       - users
   /verify:
