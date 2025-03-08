@@ -15,9 +15,10 @@ type User struct {
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-" swaggerignore:"true"`
 	Name            string         `json:"name" example:"John Doe"`
 	Email           string         `gorm:"unique" json:"email" example:"john.doe@example.com"`
+	Gender          string         `gorm:"type:text;check:gender IN ('male', 'female');" json:"gender" example:"male"`
 	Password        string         `json:"password" example:"securepassword123"`
-	Age             int            `json:"age" example:"30"`
-	Hipertension    bool           `json:"hipertension" example:"false"`
+	DOB             string         `gorm:"type:DATE;not null" json:"dob" example:"2000-01-30"`
+	Hypertension    bool           `json:"hypertension" example:"false"`
 	Cholesterol     bool           `json:"cholesterol" example:"true"`
 	DisturbedVision bool           `json:"disturbed_vision" example:"false"`
 	Weight          int            `json:"weight" example:"70"`
