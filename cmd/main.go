@@ -6,11 +6,14 @@ import (
 	"diabetify/internal/repository"
 	"diabetify/routes"
 	"log"
+	"os"
 
 	"diabetify/docs"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/markbates/goth"
+	"github.com/markbates/goth/providers/google"
 )
 
 func main() {
@@ -28,6 +31,10 @@ func main() {
 	// Connect to the database
 	database.ConnectDatabase()
 
+	// Goth Provider
+	goth.UseProviders(
+		google.New(os.Getenv("GOOGLE_KEY"), os.Getenv("GOOGLE_SECRET"), os.Getenv("GOOGLE_CALLBACK_URL"), "email", "profile"),
+	)
 	forgotPasswordRepo := repository.NewResetPasswordRepository()
 	userRepo := repository.NewUserRepository()
 	userController := controllers.NewUserController(userRepo, forgotPasswordRepo)
@@ -35,12 +42,14 @@ func main() {
 	verificationRepo := repository.NewVerificationRepository()
 	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)
 
+	oauthController := controllers.NewOauthController(userRepo)
 	router := gin.Default()
 
 	// Register user routes
 	routes.RegisterUserRoutes(router, userController)
 	routes.RegisterVerificationRoutes(router, verificationController)
 	routes.RegisterSwaggerRoutes(router)
+	routes.RegisterOauthRoutes(router, oauthController)
 
 	// Start the server
 	log.Println("Server is running on port 8080...")
