@@ -33,6 +33,10 @@ func (oc *OauthController) GoogleAuth(c *gin.Context) {
 }
 
 func (oc *OauthController) GoogleCallback(c *gin.Context) {
+	q := c.Request.URL.Query()
+	q.Set("provider", "google")
+	c.Request.URL.RawQuery = q.Encode()
+
 	user, err := gothic.CompleteUserAuth(c.Writer, c.Request)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -42,7 +46,6 @@ func (oc *OauthController) GoogleCallback(c *gin.Context) {
 		})
 		return
 	}
-
 	dbUser, err := oc.userRepo.GetUserByEmail(user.Email)
 
 	if err != nil {
