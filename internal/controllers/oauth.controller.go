@@ -3,13 +3,13 @@ package controllers
 import (
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
+	"encoding/json"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/markbates/goth/gothic"
 )
 
 type OauthController struct {
@@ -19,74 +19,91 @@ type OauthController struct {
 func NewOauthController(userRepo *repository.UserRepository) *OauthController {
 	return &OauthController{userRepo: userRepo}
 }
-
 func (oc *OauthController) GoogleAuth(c *gin.Context) {
-	q := c.Request.URL.Query()
-	q.Add("provider", "google")
-
-	if callbackURL := c.Query("callback_url"); callbackURL != "" {
-		q.Add("state", callbackURL)
+	var authRequest struct {
+		Token string `json:"token"`
 	}
 
-	c.Request.URL.RawQuery = q.Encode()
-	gothic.BeginAuthHandler(c.Writer, c.Request)
-}
-
-func (oc *OauthController) GoogleCallback(c *gin.Context) {
-	q := c.Request.URL.Query()
-	q.Set("provider", "google")
-	c.Request.URL.RawQuery = q.Encode()
-
-	user, err := gothic.CompleteUserAuth(c.Writer, c.Request)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
+	if err := c.ShouldBindJSON(&authRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Authentication failed",
+			"message": "Invalid request data",
 			"error":   err.Error(),
 		})
 		return
 	}
-	dbUser, err := oc.userRepo.GetUserByEmail(user.Email)
 
+	resp, err := http.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + authRequest.Token)
 	if err != nil {
-		newUser := &models.User{
-			Email:    user.Email,
-			Name:     user.Name,
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to verify token with Google",
+			"error":   err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Invalid Google ID token",
+			"error":   "Token verification failed",
+		})
+		return
+	}
+
+	var tokenInfo map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenInfo); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to decode token info",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	email, ok := tokenInfo["email"].(string)
+	if !ok || email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Email not found in token",
+		})
+		return
+	}
+
+	name, _ := tokenInfo["name"].(string)
+	user, err := oc.userRepo.GetUserByEmail(email)
+	isNewUser := err != nil
+
+	if isNewUser {
+		// Create new user (sign-up)
+		newUser := models.User{
+			Email:    email,
+			Name:     name,
 			Password: "",
-			Verified: true,
 		}
 
-		if err := oc.userRepo.CreateUser(newUser); err != nil {
+		err = oc.userRepo.CreateUser(&newUser)
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
-				"message": "Failed to create user",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		dbUser = newUser
-	} else if !dbUser.Verified {
-		dbUser.Verified = true
-		if err := oc.userRepo.UpdateUser(dbUser); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "Failed to update user verification status",
+				"message": "Failed to create user account",
 				"error":   err.Error(),
 			})
 			return
 		}
 	}
 
-	// Generate JWT token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": dbUser.ID,
-		"email":   dbUser.Email,
+	// Generate JWT
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
 		"exp":     time.Now().Add(time.Hour * 72).Unix(),
 	})
 
 	jwtSecret := []byte(os.Getenv("JWT_SECRET_KEY"))
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := jwtToken.SignedString(jwtSecret)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -98,24 +115,7 @@ func (oc *OauthController) GoogleCallback(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"message": "User authenticated successfully",
-		"data": gin.H{
-			"token": tokenString,
-			"user": gin.H{
-				"id":     dbUser.ID,
-				"name":   user.Name,
-				"email":  user.Email,
-				"avatar": user.AvatarURL,
-			},
-		},
-	})
-}
-
-func (oc *OauthController) Logout(c *gin.Context) {
-	gothic.Logout(c.Writer, c.Request)
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "Logged out successfully",
-		"data":    nil,
+		"message": "Google authentication successful",
+		"data":    tokenString,
 	})
 }
