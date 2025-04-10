@@ -20,14 +20,14 @@ func NewRecommendationController(repo repository.RecommendationRepository) *Reco
 // CreateRecommendation godoc
 // @Summary Create a new recommendation
 // @Description Create a recommendation with the provided data
-// @Tags recommendations
+// @Tags recommendation
 // @Accept json
 // @Produce json
 // @Param recommendation body models.Recommendation true "Recommendation data"
 // @Success 201 {object} map[string]interface{} "Recommendation created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Failed to create recommendation"
-// @Router /recommendations [post]
+// @Router /recommendation [post]
 func (rc *RecommendationController) CreateRecommendation(c *gin.Context) {
 	var recommendation models.Recommendation
 
@@ -59,13 +59,13 @@ func (rc *RecommendationController) CreateRecommendation(c *gin.Context) {
 // GetRecommendationsByUserID godoc
 // @Summary Get all recommendations for a user
 // @Description Retrieve all recommendations associated with a specific user ID
-// @Tags recommendations
+// @Tags recommendation
 // @Produce json
 // @Param user_id path int true "User ID"
 // @Success 200 {object} map[string]interface{} "Recommendations retrieved successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid user ID"
 // @Failure 500 {object} map[string]interface{} "Failed to retrieve recommendations"
-// @Router /recommendations/user/{user_id} [get]
+// @Router /recommendation/user/{user_id} [get]
 func (rc *RecommendationController) GetRecommendationsByUserID(c *gin.Context) {
 	userID, err := strconv.ParseUint(c.Param("user_id"), 10, 32)
 	if err != nil {
@@ -97,13 +97,13 @@ func (rc *RecommendationController) GetRecommendationsByUserID(c *gin.Context) {
 // GetRecommendationByID godoc
 // @Summary Get a recommendation by ID
 // @Description Retrieve recommendation information by recommendation ID
-// @Tags recommendations
+// @Tags recommendation
 // @Produce json
 // @Param id path int true "Recommendation ID"
 // @Success 200 {object} map[string]interface{} "Recommendation retrieved successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid recommendation ID"
 // @Failure 404 {object} map[string]interface{} "Recommendation not found"
-// @Router /recommendations/{id} [get]
+// @Router /recommendation/{id} [get]
 func (rc *RecommendationController) GetRecommendationByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -135,7 +135,7 @@ func (rc *RecommendationController) GetRecommendationByID(c *gin.Context) {
 // UpdateRecommendation godoc
 // @Summary Update a recommendation
 // @Description Update recommendation information
-// @Tags recommendations
+// @Tags recommendation
 // @Accept json
 // @Produce json
 // @Param id path int true "Recommendation ID"
@@ -144,7 +144,7 @@ func (rc *RecommendationController) GetRecommendationByID(c *gin.Context) {
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Recommendation not found"
 // @Failure 500 {object} map[string]interface{} "Failed to update recommendation"
-// @Router /recommendations/{id} [put]
+// @Router /recommendation/{id} [put]
 func (rc *RecommendationController) UpdateRecommendation(c *gin.Context) {
 	var recommendation models.Recommendation
 
@@ -197,14 +197,14 @@ func (rc *RecommendationController) UpdateRecommendation(c *gin.Context) {
 // DeleteRecommendation godoc
 // @Summary Delete a recommendation
 // @Description Delete recommendation by ID
-// @Tags recommendations
+// @Tags recommendation
 // @Produce json
 // @Param id path int true "Recommendation ID"
 // @Success 200 {object} map[string]interface{} "Recommendation deleted successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid recommendation ID"
 // @Failure 404 {object} map[string]interface{} "Recommendation not found"
 // @Failure 500 {object} map[string]interface{} "Failed to delete recommendation"
-// @Router /recommendations/{id} [delete]
+// @Router /recommendation/{id} [delete]
 func (rc *RecommendationController) DeleteRecommendation(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {

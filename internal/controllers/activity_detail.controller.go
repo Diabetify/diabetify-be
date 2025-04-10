@@ -20,14 +20,14 @@ func NewActivityDetailController(repo repository.ActivityDetailRepository) *Acti
 // CreateActivityDetail godoc
 // @Summary Create a new activity detail
 // @Description Create an activity detail with the provided data
-// @Tags activity-details
+// @Tags activity-detail
 // @Accept json
 // @Produce json
 // @Param activityDetail body models.ActivityDetail true "Activity Detail data"
 // @Success 201 {object} map[string]interface{} "Activity detail created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Failed to create activity detail"
-// @Router /activity-details [post]
+// @Router /activity-detail [post]
 func (adc *ActivityDetailController) CreateActivityDetail(c *gin.Context) {
 	var activityDetail models.ActivityDetail
 
@@ -59,13 +59,13 @@ func (adc *ActivityDetailController) CreateActivityDetail(c *gin.Context) {
 // GetActivityDetailsByActivityID godoc
 // @Summary Get all details for an activity
 // @Description Retrieve all activity details associated with a specific activity ID
-// @Tags activity-details
+// @Tags activity-detail
 // @Produce json
 // @Param activity_id path int true "Activity ID"
 // @Success 200 {object} map[string]interface{} "Activity details retrieved successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid activity ID"
 // @Failure 500 {object} map[string]interface{} "Failed to retrieve activity details"
-// @Router /activity-details/activity/{activity_id} [get]
+// @Router /activity-detail/activity/{activity_id} [get]
 func (adc *ActivityDetailController) GetActivityDetailsByActivityID(c *gin.Context) {
 	activityID, err := strconv.ParseUint(c.Param("activity_id"), 10, 32)
 	if err != nil {
@@ -103,7 +103,7 @@ func (adc *ActivityDetailController) GetActivityDetailsByActivityID(c *gin.Conte
 // @Success 200 {object} map[string]interface{} "Activity detail retrieved successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid activity detail ID"
 // @Failure 404 {object} map[string]interface{} "Activity detail not found"
-// @Router /activity-details/{id} [get]
+// @Router /activity-detail/{id} [get]
 func (adc *ActivityDetailController) GetActivityDetailByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -135,7 +135,7 @@ func (adc *ActivityDetailController) GetActivityDetailByID(c *gin.Context) {
 // UpdateActivityDetail godoc
 // @Summary Update an activity detail
 // @Description Update activity detail information
-// @Tags activity-details
+// @Tags activity-detail
 // @Accept json
 // @Produce json
 // @Param id path int true "Activity Detail ID"
@@ -144,7 +144,7 @@ func (adc *ActivityDetailController) GetActivityDetailByID(c *gin.Context) {
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Activity detail not found"
 // @Failure 500 {object} map[string]interface{} "Failed to update activity detail"
-// @Router /activity-details/{id} [put]
+// @Router /activity-detail/{id} [put]
 func (adc *ActivityDetailController) UpdateActivityDetail(c *gin.Context) {
 	var activityDetail models.ActivityDetail
 
@@ -198,14 +198,14 @@ func (adc *ActivityDetailController) UpdateActivityDetail(c *gin.Context) {
 // DeleteActivityDetail godoc
 // @Summary Delete an activity detail
 // @Description Delete activity detail by ID
-// @Tags activity-details
+// @Tags activity-detail
 // @Produce json
 // @Param id path int true "Activity Detail ID"
 // @Success 200 {object} map[string]interface{} "Activity detail deleted successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid activity detail ID"
 // @Failure 404 {object} map[string]interface{} "Activity detail not found"
 // @Failure 500 {object} map[string]interface{} "Failed to delete activity detail"
-// @Router /activity-details/{id} [delete]
+// @Router /activity-detail/{id} [delete]
 func (adc *ActivityDetailController) DeleteActivityDetail(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -246,13 +246,13 @@ func (adc *ActivityDetailController) DeleteActivityDetail(c *gin.Context) {
 // DeleteActivityDetailsByActivityID godoc
 // @Summary Delete all details for an activity
 // @Description Delete all activity details associated with a specific activity ID
-// @Tags activity-details
+// @Tags activity-detail
 // @Produce json
 // @Param activity_id path int true "Activity ID"
 // @Success 200 {object} map[string]interface{} "Activity details deleted successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid activity ID"
 // @Failure 500 {object} map[string]interface{} "Failed to delete activity details"
-// @Router /activity-details/activity/{activity_id} [delete]
+// @Router /activity-detail/activity/{activity_id} [delete]
 func (adc *ActivityDetailController) DeleteActivityDetailsByActivityID(c *gin.Context) {
 	activityID, err := strconv.ParseUint(c.Param("activity_id"), 10, 32)
 	if err != nil {

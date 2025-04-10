@@ -11,6 +11,10 @@ services:
     volumes:
       - "./database/script:/docker-entrypoint-initdb.d"
       - "postgres_data:/var/lib/postgresql/data"
+    networks:
+      default:
+        aliases:
+          - diabetify-db
   diabetify-be: 
     build:
       context: .

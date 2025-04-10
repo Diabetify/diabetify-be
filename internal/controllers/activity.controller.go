@@ -20,14 +20,14 @@ func NewActivityController(repo repository.ActivityRepository) *ActivityControll
 // CreateActivity godoc
 // @Summary Create a new activity
 // @Description Create an activity with the provided data
-// @Tags activities
+// @Tags activity
 // @Accept json
 // @Produce json
 // @Param activity body models.Activity true "Activity data"
 // @Success 201 {object} map[string]interface{} "Activity created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Failed to create activity"
-// @Router /activities [post]
+// @Router /activity [post]
 func (ac *ActivityController) CreateActivity(c *gin.Context) {
 	var activity models.Activity
 
@@ -59,13 +59,13 @@ func (ac *ActivityController) CreateActivity(c *gin.Context) {
 // GetActivitiesByUserID godoc
 // @Summary Get all activities for a user
 // @Description Retrieve all activities associated with a specific user ID
-// @Tags activities
+// @Tags activity
 // @Produce json
 // @Param user_id path int true "User ID"
 // @Success 200 {object} map[string]interface{} "Activities retrieved successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid user ID"
 // @Failure 500 {object} map[string]interface{} "Failed to retrieve activities"
-// @Router /activities/user/{user_id} [get]
+// @Router /activity/user/{user_id} [get]
 func (ac *ActivityController) GetActivitiesByUserID(c *gin.Context) {
 	userID, err := strconv.ParseUint(c.Param("user_id"), 10, 32)
 	if err != nil {
@@ -103,7 +103,7 @@ func (ac *ActivityController) GetActivitiesByUserID(c *gin.Context) {
 // @Success 200 {object} map[string]interface{} "Activity retrieved successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid activity ID"
 // @Failure 404 {object} map[string]interface{} "Activity not found"
-// @Router /activities/{id} [get]
+// @Router /activity/{id} [get]
 func (ac *ActivityController) GetActivityByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -135,7 +135,7 @@ func (ac *ActivityController) GetActivityByID(c *gin.Context) {
 // UpdateActivity godoc
 // @Summary Update an activity
 // @Description Update activity information
-// @Tags activities
+// @Tags activity
 // @Accept json
 // @Produce json
 // @Param id path int true "Activity ID"
@@ -143,7 +143,7 @@ func (ac *ActivityController) GetActivityByID(c *gin.Context) {
 // @Success 200 {object} map[string]interface{} "Activity updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Failed to update activity"
-// @Router /activities/{id} [put]
+// @Router /activity/{id} [put]
 func (ac *ActivityController) UpdateActivity(c *gin.Context) {
 	var activity models.Activity
 
@@ -195,13 +195,13 @@ func (ac *ActivityController) UpdateActivity(c *gin.Context) {
 // DeleteActivity godoc
 // @Summary Delete an activity
 // @Description Delete activity by ID
-// @Tags activities
+// @Tags activity
 // @Produce json
 // @Param id path int true "Activity ID"
 // @Success 200 {object} map[string]interface{} "Activity deleted successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid activity ID"
 // @Failure 500 {object} map[string]interface{} "Failed to delete activity"
-// @Router /activities/{id} [delete]
+// @Router /activity/{id} [delete]
 func (ac *ActivityController) DeleteActivity(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
