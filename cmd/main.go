@@ -27,6 +27,7 @@ func main() {
 
 	// Connect to the database
 	database.ConnectDatabase()
+	db := database.DB
 
 	forgotPasswordRepo := repository.NewResetPasswordRepository()
 	userRepo := repository.NewUserRepository()
@@ -38,11 +39,23 @@ func main() {
 	oauthController := controllers.NewOauthController(userRepo)
 	router := gin.Default()
 
+	activityRepo := repository.NewActivityRepository(db)
+	activityController := controllers.NewActivityController(activityRepo)
+
+	activityDetailRepo := repository.NewActivityDetailRepository(db)
+	activityDetailController := controllers.NewActivityDetailController(activityDetailRepo)
+
+	recommendationRepo := repository.NewRecommendationRepository(db)
+	recommendationController := controllers.NewRecommendationController(recommendationRepo)
+
 	// Register user routes
 	routes.RegisterUserRoutes(router, userController)
 	routes.RegisterVerificationRoutes(router, verificationController)
 	routes.RegisterSwaggerRoutes(router)
 	routes.RegisterOauthRoutes(router, oauthController)
+	routes.RegisterActivityRoutes(router, activityController)
+	routes.RegisterActivityDetailRoutes(router, activityDetailController)
+	routes.RegisterRecommendationRoutes(router, recommendationController)
 
 	// Start the server
 	log.Println("Server is running on port 8080...")
