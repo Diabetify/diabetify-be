@@ -291,7 +291,7 @@ paths:
             type: object
       summary: Get an activity detail by ID
       tags:
-      - activity-details
+      - activity-detail
     put:
       consumes:
       - application/json
@@ -453,7 +453,7 @@ paths:
             type: object
       summary: Get an activity by ID
       tags:
-      - activities
+      - activity
     put:
       consumes:
       - application/json

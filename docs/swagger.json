@@ -195,7 +195,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "activity-details"
+                    "activity-detail"
                 ],
                 "summary": "Get an activity detail by ID",
                 "parameters": [
@@ -393,7 +393,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "activities"
+                    "activity"
                 ],
                 "summary": "Get an activity by ID",
                 "parameters": [

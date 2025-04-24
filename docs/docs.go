@@ -206,7 +206,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "activity-details"
+                    "activity-detail"
                 ],
                 "summary": "Get an activity detail by ID",
                 "parameters": [
@@ -404,7 +404,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "activities"
+                    "activity"
                 ],
                 "summary": "Get an activity by ID",
                 "parameters": [

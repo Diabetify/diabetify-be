@@ -97,7 +97,7 @@ func (ac *ActivityController) GetActivitiesByUserID(c *gin.Context) {
 // GetActivityByID godoc
 // @Summary Get an activity by ID
 // @Description Retrieve activity information by activity ID
-// @Tags activities
+// @Tags activity
 // @Produce json
 // @Param id path int true "Activity ID"
 // @Success 200 {object} map[string]interface{} "Activity retrieved successfully"

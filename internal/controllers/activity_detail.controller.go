@@ -97,7 +97,7 @@ func (adc *ActivityDetailController) GetActivityDetailsByActivityID(c *gin.Conte
 // GetActivityDetailByID godoc
 // @Summary Get an activity detail by ID
 // @Description Retrieve activity detail information by detail ID
-// @Tags activity-details
+// @Tags activity-detail
 // @Produce json
 // @Param id path int true "Activity Detail ID"
 // @Success 200 {object} map[string]interface{} "Activity detail retrieved successfully"
