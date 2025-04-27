@@ -88,6 +88,24 @@ definitions:
         example: "500"
         type: string
     type: object
+  models.Article:
+    properties:
+      created_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+      description:
+        example: This is a sample article description.
+        type: string
+      id:
+        example: 1
+        type: integer
+      title:
+        example: Sample Article Title
+        type: string
+      updated_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+    type: object
   models.Recommendation:
     properties:
       created_at:
@@ -521,6 +539,163 @@ paths:
       summary: Get all activities for a user
       tags:
       - activity
+  /article:
+    get:
+      description: Retrieve all articles
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Articles retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to retrieve articles
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get all articles
+      tags:
+      - article
+    post:
+      consumes:
+      - application/json
+      description: Create an article with the provided data
+      parameters:
+      - description: Article data
+        in: body
+        name: article
+        required: true
+        schema:
+          $ref: '#/definitions/models.Article'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Article created successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to create article
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Create a new article
+      tags:
+      - article
+  /article/{id}:
+    delete:
+      description: Delete article by ID
+      parameters:
+      - description: Article ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Article deleted successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid article ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Article not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to delete article
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Delete an article
+      tags:
+      - article
+    get:
+      description: Retrieve article information by ID
+      parameters:
+      - description: Article ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Article retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid article ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Article not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get an article by ID
+      tags:
+      - article
+    put:
+      consumes:
+      - application/json
+      description: Update article information
+      parameters:
+      - description: Article ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Article data
+        in: body
+        name: article
+        required: true
+        schema:
+          $ref: '#/definitions/models.Article'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Article updated successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Article not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to update article
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Update an article
+      tags:
+      - article
   /recommendation:
     post:
       consumes:
