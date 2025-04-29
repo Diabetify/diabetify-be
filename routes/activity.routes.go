@@ -2,17 +2,20 @@ package routes
 
 import (
 	"diabetify/internal/controllers"
+	"diabetify/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 )
 
 func RegisterActivityRoutes(router *gin.Engine, activityController *controllers.ActivityController) {
-	userRoutes := router.Group("/activity")
+	activityRoutes := router.Group("/activity")
+	activityRoutes.Use(middleware.AuthMiddleware())
 	{
-		userRoutes.POST("/", activityController.CreateActivity)
-		userRoutes.GET("/user/:user_id", activityController.GetActivitiesByUserID)
-		userRoutes.GET("/:id", activityController.GetActivityByID)
-		userRoutes.PUT("/:id", activityController.UpdateActivity)
-		userRoutes.DELETE("/:id", activityController.DeleteActivity)
+		activityRoutes.POST("/", activityController.CreateActivity)
+		activityRoutes.GET("/:id", activityController.GetActivityByID)
+		activityRoutes.PUT("/:id", activityController.UpdateActivity)
+		activityRoutes.DELETE("/:id", activityController.DeleteActivity)
+		activityRoutes.GET("/me", activityController.GetCurrentUserActivities)
+		activityRoutes.GET("/me/date-range", activityController.GetActivitiesByDateRange)
 	}
 }

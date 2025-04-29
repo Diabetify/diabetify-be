@@ -156,9 +156,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create an activity with the provided data
+      description: Create an activity with the provided data (requires authentication)
       parameters:
-      - description: Activity data
+      - description: Activity data including value field
         in: body
         name: activity
         required: true
@@ -177,17 +177,24 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
         "500":
           description: Failed to create activity
           schema:
             additionalProperties: true
             type: object
+      security:
+      - ApiKeyAuth: []
       summary: Create a new activity
       tags:
       - activity
   /activity/{id}:
     delete:
-      description: Delete activity by ID
+      description: Delete activity by ID (requires authentication)
       parameters:
       - description: Activity ID
         in: path
@@ -207,16 +214,33 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Activity not found
+          schema:
+            additionalProperties: true
+            type: object
         "500":
           description: Failed to delete activity
           schema:
             additionalProperties: true
             type: object
+      security:
+      - ApiKeyAuth: []
       summary: Delete an activity
       tags:
       - activity
     get:
-      description: Retrieve activity information by activity ID
+      description: Retrieve activity information by activity ID (requires authentication)
       parameters:
       - description: Activity ID
         in: path
@@ -236,25 +260,37 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
         "404":
           description: Activity not found
           schema:
             additionalProperties: true
             type: object
+      security:
+      - ApiKeyAuth: []
       summary: Get an activity by ID
       tags:
       - activity
     put:
       consumes:
       - application/json
-      description: Update activity information
+      description: Update activity information including value field (requires authentication)
       parameters:
       - description: Activity ID
         in: path
         name: id
         required: true
         type: integer
-      - description: Activity data
+      - description: Activity data including value field
         in: body
         name: activity
         required: true
@@ -273,23 +309,72 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Activity not found
+          schema:
+            additionalProperties: true
+            type: object
         "500":
           description: Failed to update activity
           schema:
             additionalProperties: true
             type: object
+      security:
+      - ApiKeyAuth: []
       summary: Update an activity
       tags:
       - activity
-  /activity/user/{user_id}:
+  /activity/me:
     get:
-      description: Retrieve all activities associated with a specific user ID
+      description: Retrieve all activities for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Activities retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to retrieve activities
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get activities for current user
+      tags:
+      - activity
+  /activity/me/date-range:
+    get:
+      description: Retrieve all activities for the authenticated user within a specific
+        date range, grouped by type
       parameters:
-      - description: User ID
-        in: path
-        name: user_id
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: start_date
         required: true
-        type: integer
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        required: true
+        type: string
       produces:
       - application/json
       responses:
@@ -299,7 +384,12 @@ paths:
             additionalProperties: true
             type: object
         "400":
-          description: Invalid user ID
+          description: Invalid date format
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties: true
             type: object
@@ -308,7 +398,9 @@ paths:
           schema:
             additionalProperties: true
             type: object
-      summary: Get all activities for a user
+      security:
+      - BearerAuth: []
+      summary: Get activities by date range
       tags:
       - activity
   /article:

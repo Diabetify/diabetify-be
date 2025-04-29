@@ -17,7 +17,12 @@ const docTemplate = `{
     "paths": {
         "/activity": {
             "post": {
-                "description": "Create an activity with the provided data",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Create an activity with the provided data (requires authentication)",
                 "consumes": [
                     "application/json"
                 ],
@@ -30,7 +35,7 @@ const docTemplate = `{
                 "summary": "Create a new activity",
                 "parameters": [
                     {
-                        "description": "Activity data",
+                        "description": "Activity data including value field",
                         "name": "activity",
                         "in": "body",
                         "required": true,
@@ -54,6 +59,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "500": {
                         "description": "Failed to create activity",
                         "schema": {
@@ -64,22 +76,74 @@ const docTemplate = `{
                 }
             }
         },
-        "/activity/user/{user_id}": {
+        "/activity/me": {
             "get": {
-                "description": "Retrieve all activities associated with a specific user ID",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve all activities for the authenticated user",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "activity"
                 ],
-                "summary": "Get all activities for a user",
+                "summary": "Get activities for current user",
+                "responses": {
+                    "200": {
+                        "description": "Activities retrieved successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to retrieve activities",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/activity/me/date-range": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve all activities for the authenticated user within a specific date range, grouped by type",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "activity"
+                ],
+                "summary": "Get activities by date range",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "User ID",
-                        "name": "user_id",
-                        "in": "path",
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query",
                         "required": true
                     }
                 ],
@@ -92,7 +156,14 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid user ID",
+                        "description": "Invalid date format",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -110,7 +181,12 @@ const docTemplate = `{
         },
         "/activity/{id}": {
             "get": {
-                "description": "Retrieve activity information by activity ID",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve activity information by activity ID (requires authentication)",
                 "produces": [
                     "application/json"
                 ],
@@ -142,6 +218,20 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "404": {
                         "description": "Activity not found",
                         "schema": {
@@ -152,7 +242,12 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Update activity information",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Update activity information including value field (requires authentication)",
                 "consumes": [
                     "application/json"
                 ],
@@ -172,7 +267,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Activity data",
+                        "description": "Activity data including value field",
                         "name": "activity",
                         "in": "body",
                         "required": true,
@@ -196,6 +291,27 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Activity not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "500": {
                         "description": "Failed to update activity",
                         "schema": {
@@ -206,7 +322,12 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Delete activity by ID",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Delete activity by ID (requires authentication)",
                 "produces": [
                     "application/json"
                 ],
@@ -233,6 +354,27 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid activity ID",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Activity not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

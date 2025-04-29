@@ -2,6 +2,8 @@ package repository
 
 import (
 	"diabetify/internal/models"
+	"log"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -12,6 +14,7 @@ type ActivityRepository interface {
 	FindByID(id uint) (*models.Activity, error)
 	Update(activity *models.Activity) error
 	Delete(id uint) error
+	FindByUserIDAndActivityDateRange(userID uint, startDate, endDate time.Time) ([]models.Activity, error)
 }
 
 type activityRepository struct {
@@ -47,4 +50,28 @@ func (r *activityRepository) Update(activity *models.Activity) error {
 
 func (r *activityRepository) Delete(id uint) error {
 	return r.db.Delete(&models.Activity{}, id).Error
+}
+
+func (r *activityRepository) FindByUserIDAndActivityDateRange(userID uint, startDate, endDate time.Time) ([]models.Activity, error) {
+	var activities []models.Activity
+
+	// Debug the query
+	log.Printf("Query: SELECT * FROM activities WHERE user_id = %d AND activity_date BETWEEN '%v' AND '%v'",
+		userID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+
+	err := r.db.Where("user_id = ? AND activity_date BETWEEN ? AND ?", userID, startDate, endDate).
+		Order("activity_date DESC").
+		Find(&activities).Error
+
+	// Log the result
+	if err != nil {
+		log.Printf("Error querying activities: %v", err)
+	} else {
+		log.Printf("Found %d activities", len(activities))
+		for i, a := range activities {
+			log.Printf("Activity %d: ID=%d, Type=%s, Date=%v", i+1, a.ID, a.ActivityType, a.ActivityDate)
+		}
+	}
+
+	return activities, err
 }
