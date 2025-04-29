@@ -43,7 +43,6 @@ func ConnectDatabase() {
 	DB.AutoMigrate(&models.Verification{})
 	DB.AutoMigrate(&models.ResetPassword{})
 	DB.AutoMigrate(&models.Activity{})
-	DB.AutoMigrate(&models.ActivityDetail{})
 	DB.AutoMigrate(&models.Article{})
 	DB.AutoMigrate(&models.UserProfile{})
 }

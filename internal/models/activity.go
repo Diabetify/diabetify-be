@@ -15,4 +15,5 @@ type Activity struct {
 	User         User           `gorm:"foreignKey:UserID" json:"-"`
 	ActivityType string         `json:"activity_type" example:"food"`
 	ActivityDate time.Time      `json:"activity_date" example:"2023-01-01"`
+	Value        int            `json:"value" example:"500"`
 }

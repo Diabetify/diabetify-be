@@ -42,9 +42,6 @@ func main() {
 	activityRepo := repository.NewActivityRepository(db)
 	activityController := controllers.NewActivityController(activityRepo)
 
-	activityDetailRepo := repository.NewActivityDetailRepository(db)
-	activityDetailController := controllers.NewActivityDetailController(activityDetailRepo)
-
 	articleRepo := repository.NewArticleRepository(db)
 	articleController := controllers.NewArticleController(articleRepo)
 
@@ -57,7 +54,6 @@ func main() {
 	routes.RegisterSwaggerRoutes(router)
 	routes.RegisterOauthRoutes(router, oauthController)
 	routes.RegisterActivityRoutes(router, activityController)
-	routes.RegisterActivityDetailRoutes(router, activityDetailController)
 	routes.RegisterArticleRoutes(router, articleController)
 	routes.RegisterUserProfileRoutes(router, profileController)
 
