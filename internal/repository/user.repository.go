@@ -28,6 +28,19 @@ func (ur *UserRepository) GetUserByID(id uint) (*models.User, error) {
 	return &user, err
 }
 
+func (ur *UserRepository) PatchUser(id uint, data map[string]interface{}) error {
+	var user models.User
+
+	if err := database.DB.First(&user, id).Error; err != nil {
+		return err
+	}
+
+	if err := database.DB.Model(&user).Updates(data).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
 func (ur *UserRepository) UpdateUser(user *models.User) error {
 	return database.DB.Save(user).Error
 }

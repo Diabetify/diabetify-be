@@ -90,35 +90,6 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 	})
 }
 
-// GetUserByEmail godoc
-// @Summary Get a user by email
-// @Description Retrieve user information by email
-// @Tags users
-// @Produce json
-// @Param email path string true "User email"
-// @Success 200 {object} map[string]interface{} "User retrieved successfully"
-// @Failure 404 {object} map[string]interface{} "User not found"
-// @Router /users/email/{email} [get]
-func (uc *UserController) GetUserByEmail(c *gin.Context) {
-	email := c.Param("email")
-
-	user, err := uc.repo.GetUserByEmail(email)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "User not found",
-			"error":   "No user associated with this email",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "User retrieved successfully",
-		"data":    user,
-	})
-}
-
 // GetUserByID godoc
 // @Summary Get a user by ID
 // @Description Retrieve user information by user ID
@@ -456,5 +427,175 @@ func (uc *UserController) ResetPassword(c *gin.Context) {
 		"status":  "success",
 		"message": "Password has been reset successfully",
 		"data":    nil,
+	})
+}
+
+// PatchUser godoc
+// @Summary Patch current user
+// @Description Update specific fields of the authenticated user's information
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param userData body map[string]interface{} true "User data to update"
+// @Success 200 {object} map[string]interface{} "User patched successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Failure 500 {object} map[string]interface{} "Failed to update user"
+// @Router /users/me [patch]
+func (uc *UserController) PatchUser(c *gin.Context) {
+	// Get user ID from the JWT token (set by middleware)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized",
+			"error":   "User ID not found in token",
+		})
+		return
+	}
+
+	// Check if the user exists
+	existingUser, err := uc.repo.GetUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User not found",
+			"error":   "No user exists with the provided ID",
+		})
+		return
+	}
+
+	// Parse the patch data
+	var patchData map[string]interface{}
+	if err := c.ShouldBindJSON(&patchData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid request data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Handle password update specially if it's included
+	if password, ok := patchData["password"].(string); ok {
+		if len(password) < 8 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Password must be at least 8 characters",
+				"error":   "Invalid password",
+			})
+			return
+		}
+
+		// Hash the new password
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to hash password",
+				"error":   "Internal server error",
+			})
+			return
+		}
+		patchData["password"] = string(hashedPassword)
+	}
+
+	// Prevent user from changing their role
+	if _, hasRole := patchData["role"]; hasRole {
+		// Check if user is admin
+		userRole, roleExists := c.Get("role")
+		if !roleExists || userRole.(string) != "admin" {
+			// Non-admin users cannot change their role
+			delete(patchData, "role")
+		}
+	}
+
+	// Prevent changing email to one that already exists
+	if email, hasEmail := patchData["email"].(string); hasEmail && email != existingUser.Email {
+		// Check if email already exists
+		_, err := uc.repo.GetUserByEmail(email)
+		if err == nil { // No error means email exists
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Email already in use",
+				"error":   "Email address is already registered",
+			})
+			return
+		}
+	}
+
+	// Apply the patch to the user
+	if err := uc.repo.PatchUser(userID.(uint), patchData); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to update user",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Get the updated user
+	updatedUser, err := uc.repo.GetUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "User updated but failed to retrieve updated data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Hide sensitive information
+	updatedUser.Password = ""
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "User patched successfully",
+		"data":    updatedUser,
+	})
+}
+
+// GetCurrentUser godoc
+// @Summary Get current user information
+// @Description Retrieve information about the currently authenticated user
+// @Tags users
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "User information retrieved successfully"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "User not found"
+// @Router /users/me [get]
+func (uc *UserController) GetCurrentUser(c *gin.Context) {
+	// Get user ID from the JWT token (set by middleware)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized",
+			"error":   "User ID not found in token",
+		})
+		return
+	}
+
+	// Retrieve the user
+	user, err := uc.repo.GetUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User not found",
+			"error":   "No user exists with this ID",
+		})
+		return
+	}
+
+	// Remove sensitive information
+	user.Password = ""
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "User information retrieved successfully",
+		"data":    user,
 	})
 }

@@ -2,22 +2,26 @@ package routes
 
 import (
 	"diabetify/internal/controllers"
+	"diabetify/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 )
 
 func RegisterUserRoutes(router *gin.Engine, userController *controllers.UserController) {
-	userRoutes := router.Group("/users")
+	userRoutesPublic := router.Group("/users")
 	{
-		userRoutes.POST("/", userController.CreateUser)
-		userRoutes.GET("/:id", userController.GetUserByID)
-		userRoutes.GET("/email/:email", userController.GetUserByEmail)
-		userRoutes.PUT("/:id", userController.UpdateUser)
-		userRoutes.DELETE("/:id", userController.DeleteUser)
-
-		// Auth
-		userRoutes.POST("/login", userController.LoginUser)
-		userRoutes.POST("/reset-password", userController.ForgotPassword)
-		userRoutes.POST("/change-password", userController.ResetPassword)
+		userRoutesPublic.POST("/", userController.CreateUser)
+		userRoutesPublic.POST("/login", userController.LoginUser)
+		userRoutesPublic.POST("/forgot-password", userController.ForgotPassword)
+		userRoutesPublic.POST("/reset-password", userController.ResetPassword)
+	}
+	userRoutesPrivate := router.Group("/users")
+	userRoutesPrivate.Use(middleware.AuthMiddleware())
+	{
+		userRoutesPrivate.GET("/me", userController.GetCurrentUser)
+		userRoutesPrivate.GET("/:id", userController.GetUserByID)
+		userRoutesPrivate.PUT("/:id", userController.UpdateUser)
+		userRoutesPrivate.PATCH("/:id", userController.PatchUser)
+		userRoutesPrivate.DELETE("/:id", userController.DeleteUser)
 	}
 }

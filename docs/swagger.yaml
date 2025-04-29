@@ -996,31 +996,6 @@ paths:
       summary: Update a user
       tags:
       - users
-  /users/email/{email}:
-    get:
-      description: Retrieve user information by email
-      parameters:
-      - description: User email
-        in: path
-        name: email
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: User retrieved successfully
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: User not found
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Get a user by email
-      tags:
-      - users
   /users/forgot-password:
     post:
       consumes:
@@ -1090,6 +1065,77 @@ paths:
             additionalProperties: true
             type: object
       summary: Login a user
+      tags:
+      - users
+  /users/me:
+    get:
+      description: Retrieve information about the currently authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User information retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get current user information
+      tags:
+      - users
+    patch:
+      consumes:
+      - application/json
+      description: Update specific fields of the authenticated user's information
+      parameters:
+      - description: User data to update
+        in: body
+        name: userData
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User patched successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to update user
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Patch current user
       tags:
       - users
   /users/reset-password:
