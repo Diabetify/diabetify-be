@@ -755,9 +755,14 @@
                 }
             }
         },
-        "/recommendation": {
-            "post": {
-                "description": "Create a recommendation with the provided data",
+        "/profile": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve the authenticated user's profile",
                 "consumes": [
                     "application/json"
                 ],
@@ -765,125 +770,26 @@
                     "application/json"
                 ],
                 "tags": [
-                    "recommendation"
+                    "profile"
                 ],
-                "summary": "Create a new recommendation",
-                "parameters": [
-                    {
-                        "description": "Recommendation data",
-                        "name": "recommendation",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.Recommendation"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Recommendation created successfully",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request data",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Failed to create recommendation",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/recommendation/user/{user_id}": {
-            "get": {
-                "description": "Retrieve all recommendations associated with a specific user ID",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "recommendation"
-                ],
-                "summary": "Get all recommendations for a user",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "User ID",
-                        "name": "user_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Get user profile",
                 "responses": {
                     "200": {
-                        "description": "Recommendations retrieved successfully",
+                        "description": "User profile retrieved successfully",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "400": {
-                        "description": "Invalid user ID",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Failed to retrieve recommendations",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/recommendation/{id}": {
-            "get": {
-                "description": "Retrieve recommendation information by recommendation ID",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "recommendation"
-                ],
-                "summary": "Get a recommendation by ID",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Recommendation ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Recommendation retrieved successfully",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid recommendation ID",
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "404": {
-                        "description": "Recommendation not found",
+                        "description": "Profile not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -892,7 +798,12 @@
                 }
             },
             "put": {
-                "description": "Update recommendation information",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update the authenticated user's profile",
                 "consumes": [
                     "application/json"
                 ],
@@ -900,30 +811,23 @@
                     "application/json"
                 ],
                 "tags": [
-                    "recommendation"
+                    "profile"
                 ],
-                "summary": "Update a recommendation",
+                "summary": "Update user profile",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Recommendation ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Recommendation data",
-                        "name": "recommendation",
+                        "description": "Profile data",
+                        "name": "profile",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.Recommendation"
+                            "$ref": "#/definitions/models.UserProfile"
                         }
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Recommendation updated successfully",
+                        "description": "Profile updated successfully",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -936,15 +840,81 @@
                             "additionalProperties": true
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "404": {
-                        "description": "Recommendation not found",
+                        "description": "Profile not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "500": {
-                        "description": "Failed to update recommendation",
+                        "description": "Failed to update profile",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create a profile for the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "profile"
+                ],
+                "summary": "Create user profile",
+                "parameters": [
+                    {
+                        "description": "Profile data",
+                        "name": "profile",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.UserProfile"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Profile created successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to create profile",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -953,47 +923,103 @@
                 }
             },
             "delete": {
-                "description": "Delete recommendation by ID",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Delete the authenticated user's profile",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "recommendation"
+                    "profile"
                 ],
-                "summary": "Delete a recommendation",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Recommendation ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Delete user profile",
                 "responses": {
                     "200": {
-                        "description": "Recommendation deleted successfully",
+                        "description": "Profile deleted successfully",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "400": {
-                        "description": "Invalid recommendation ID",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Recommendation not found",
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "500": {
-                        "description": "Failed to delete recommendation",
+                        "description": "Failed to delete profile",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update specific fields of the authenticated user's profile",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "profile"
+                ],
+                "summary": "Patch user profile",
+                "parameters": [
+                    {
+                        "description": "Profile data to update",
+                        "name": "profile",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Profile patched successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Profile not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to update profile",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1713,54 +1739,13 @@
                 }
             }
         },
-        "models.Recommendation": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string",
-                    "example": "2023-01-01T00:00:00Z"
-                },
-                "description": {
-                    "type": "string",
-                    "example": "Kurangi konsumsi gula sebanyak 10% dari asupan harian Anda untuk menurunkan risiko diabetes."
-                },
-                "id": {
-                    "type": "integer",
-                    "example": 1
-                },
-                "title": {
-                    "type": "string",
-                    "example": "Kurangi konsumsi gula"
-                },
-                "type": {
-                    "type": "string",
-                    "example": "nutrition"
-                },
-                "updated_at": {
-                    "type": "string",
-                    "example": "2023-01-01T00:00:00Z"
-                },
-                "user_id": {
-                    "type": "integer",
-                    "example": 1
-                }
-            }
-        },
         "models.User": {
             "description": "User model for the system",
             "type": "object",
             "properties": {
-                "cholesterol": {
-                    "type": "boolean",
-                    "example": true
-                },
                 "created_at": {
                     "type": "string",
                     "example": "2023-01-01T00:00:00Z"
-                },
-                "disturbed_vision": {
-                    "type": "boolean",
-                    "example": false
                 },
                 "dob": {
                     "type": "string",
@@ -1773,14 +1758,6 @@
                 "gender": {
                     "type": "string",
                     "example": "male"
-                },
-                "height": {
-                    "type": "integer",
-                    "example": 175
-                },
-                "hypertension": {
-                    "type": "boolean",
-                    "example": false
                 },
                 "id": {
                     "type": "integer",
@@ -1801,6 +1778,43 @@
                 "verified": {
                     "type": "boolean",
                     "example": false
+                }
+            }
+        },
+        "models.UserProfile": {
+            "type": "object",
+            "properties": {
+                "bmi": {
+                    "type": "number",
+                    "example": 22.9
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2023-01-01T00:00:00Z"
+                },
+                "disturbed_vision": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "height": {
+                    "type": "integer",
+                    "example": 175
+                },
+                "hypertension": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2023-01-01T00:00:00Z"
+                },
+                "user_id": {
+                    "type": "integer",
+                    "example": 1
                 },
                 "weight": {
                     "type": "integer",

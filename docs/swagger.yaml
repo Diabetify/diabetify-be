@@ -106,43 +106,12 @@ definitions:
         example: "2023-01-01T00:00:00Z"
         type: string
     type: object
-  models.Recommendation:
-    properties:
-      created_at:
-        example: "2023-01-01T00:00:00Z"
-        type: string
-      description:
-        example: Kurangi konsumsi gula sebanyak 10% dari asupan harian Anda untuk
-          menurunkan risiko diabetes.
-        type: string
-      id:
-        example: 1
-        type: integer
-      title:
-        example: Kurangi konsumsi gula
-        type: string
-      type:
-        example: nutrition
-        type: string
-      updated_at:
-        example: "2023-01-01T00:00:00Z"
-        type: string
-      user_id:
-        example: 1
-        type: integer
-    type: object
   models.User:
     description: User model for the system
     properties:
-      cholesterol:
-        example: true
-        type: boolean
       created_at:
         example: "2023-01-01T00:00:00Z"
         type: string
-      disturbed_vision:
-        example: false
-        type: boolean
       dob:
         example: "2000-01-30"
         type: string
@@ -152,12 +121,6 @@ definitions:
       gender:
         example: male
         type: string
-      height:
-        example: 175
-        type: integer
-      hypertension:
-        example: false
-        type: boolean
       id:
         example: 1
         type: integer
@@ -173,6 +136,33 @@ definitions:
       verified:
         example: false
         type: boolean
+    type: object
+  models.UserProfile:
+    properties:
+      bmi:
+        example: 22.9
+        type: number
+      created_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+      disturbed_vision:
+        example: false
+        type: boolean
+      height:
+        example: 175
+        type: integer
+      hypertension:
+        example: false
+        type: boolean
+      id:
+        example: 1
+        type: integer
+      updated_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+      user_id:
+        example: 1
+        type: integer
       weight:
         example: 70
         type: integer
@@ -696,23 +686,120 @@ paths:
       summary: Update an article
       tags:
       - article
-  /recommendation:
+  /profile:
+    delete:
+      description: Delete the authenticated user's profile
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Profile deleted successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to delete profile
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete user profile
+      tags:
+      - profile
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the authenticated user's profile
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User profile retrieved successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Profile not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get user profile
+      tags:
+      - profile
+    patch:
+      consumes:
+      - application/json
+      description: Update specific fields of the authenticated user's profile
+      parameters:
+      - description: Profile data to update
+        in: body
+        name: profile
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Profile patched successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Profile not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Failed to update profile
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Patch user profile
+      tags:
+      - profile
     post:
       consumes:
       - application/json
-      description: Create a recommendation with the provided data
+      description: Create a profile for the authenticated user
       parameters:
-      - description: Recommendation data
+      - description: Profile data
         in: body
-        name: recommendation
+        name: profile
         required: true
         schema:
-          $ref: '#/definitions/models.Recommendation'
+          $ref: '#/definitions/models.UserProfile'
       produces:
       - application/json
       responses:
         "201":
-          description: Recommendation created successfully
+          description: Profile created successfully
           schema:
             additionalProperties: true
             type: object
@@ -721,99 +808,37 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "500":
-          description: Failed to create recommendation
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Create a new recommendation
-      tags:
-      - recommendation
-  /recommendation/{id}:
-    delete:
-      description: Delete recommendation by ID
-      parameters:
-      - description: Recommendation ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Recommendation deleted successfully
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Invalid recommendation ID
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Recommendation not found
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties: true
             type: object
         "500":
-          description: Failed to delete recommendation
+          description: Failed to create profile
           schema:
             additionalProperties: true
             type: object
-      summary: Delete a recommendation
+      security:
+      - BearerAuth: []
+      summary: Create user profile
       tags:
-      - recommendation
-    get:
-      description: Retrieve recommendation information by recommendation ID
-      parameters:
-      - description: Recommendation ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Recommendation retrieved successfully
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Invalid recommendation ID
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Recommendation not found
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Get a recommendation by ID
-      tags:
-      - recommendation
+      - profile
     put:
       consumes:
       - application/json
-      description: Update recommendation information
+      description: Update the authenticated user's profile
       parameters:
-      - description: Recommendation ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Recommendation data
+      - description: Profile data
         in: body
-        name: recommendation
+        name: profile
         required: true
         schema:
-          $ref: '#/definitions/models.Recommendation'
+          $ref: '#/definitions/models.UserProfile'
       produces:
       - application/json
       responses:
         "200":
-          description: Recommendation updated successfully
+          description: Profile updated successfully
           schema:
             additionalProperties: true
             type: object
@@ -822,49 +847,26 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
         "404":
-          description: Recommendation not found
+          description: Profile not found
           schema:
             additionalProperties: true
             type: object
         "500":
-          description: Failed to update recommendation
+          description: Failed to update profile
           schema:
             additionalProperties: true
             type: object
-      summary: Update a recommendation
+      security:
+      - BearerAuth: []
+      summary: Update user profile
       tags:
-      - recommendation
-  /recommendation/user/{user_id}:
-    get:
-      description: Retrieve all recommendations associated with a specific user ID
-      parameters:
-      - description: User ID
-        in: path
-        name: user_id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Recommendations retrieved successfully
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Invalid user ID
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Failed to retrieve recommendations
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Get all recommendations for a user
-      tags:
-      - recommendation
+      - profile
   /users:
     post:
       consumes:

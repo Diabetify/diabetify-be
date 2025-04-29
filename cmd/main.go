@@ -45,11 +45,11 @@ func main() {
 	activityDetailRepo := repository.NewActivityDetailRepository(db)
 	activityDetailController := controllers.NewActivityDetailController(activityDetailRepo)
 
-	recommendationRepo := repository.NewRecommendationRepository(db)
-	recommendationController := controllers.NewRecommendationController(recommendationRepo)
-
 	articleRepo := repository.NewArticleRepository(db)
 	articleController := controllers.NewArticleController(articleRepo)
+
+	profileRepo := repository.NewUserProfileRepository(db)
+	profileController := controllers.NewUserProfileController(profileRepo)
 
 	// Register user routes
 	routes.RegisterUserRoutes(router, userController)
@@ -58,8 +58,8 @@ func main() {
 	routes.RegisterOauthRoutes(router, oauthController)
 	routes.RegisterActivityRoutes(router, activityController)
 	routes.RegisterActivityDetailRoutes(router, activityDetailController)
-	routes.RegisterRecommendationRoutes(router, recommendationController)
 	routes.RegisterArticleRoutes(router, articleController)
+	routes.RegisterUserProfileRoutes(router, profileController)
 
 	// Start the server
 	log.Println("Server is running on port 8080...")

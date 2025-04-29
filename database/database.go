@@ -44,6 +44,6 @@ func ConnectDatabase() {
 	DB.AutoMigrate(&models.ResetPassword{})
 	DB.AutoMigrate(&models.Activity{})
 	DB.AutoMigrate(&models.ActivityDetail{})
-	DB.AutoMigrate(&models.Recommendation{})
 	DB.AutoMigrate(&models.Article{})
+	DB.AutoMigrate(&models.UserProfile{})
 }
