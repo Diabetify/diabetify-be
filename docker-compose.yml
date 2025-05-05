@@ -9,7 +9,7 @@ services:
     ports:
       - "${DB_PORT}:5432"
     volumes:
-      - "./database/script:/docker-entrypoint-initdb.d"
+      # - "./database/script:/docker-entrypoint-initdb.d"
       - "postgres_data:/var/lib/postgresql/data"
     networks:
       default:

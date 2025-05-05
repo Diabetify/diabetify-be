@@ -72,15 +72,45 @@ definitions:
     type: object
   models.Article:
     properties:
+      author:
+        example: John Doe
+        type: string
+      category:
+        example: Health
+        type: string
+      content:
+        example: Full article content goes here...
+        type: string
       created_at:
         example: "2023-01-01T00:00:00Z"
         type: string
       description:
         example: This is a sample article description.
         type: string
+      has_image:
+        example: true
+        type: boolean
       id:
         example: 1
         type: integer
+      image_mime_type:
+        example: image/jpeg
+        type: string
+      is_published:
+        example: true
+        type: boolean
+      published_at:
+        example: "2023-01-01T00:00:00Z"
+        type: string
+      read_count:
+        example: 42
+        type: integer
+      tags:
+        example: diabetes,health,nutrition
+        type: string
+      thumbnail_url:
+        example: https://example.com/image.jpg
+        type: string
       title:
         example: Sample Article Title
         type: string
@@ -425,6 +455,7 @@ paths:
     post:
       consumes:
       - application/json
+      - multipart/form-data
       description: Create an article with the provided data
       parameters:
       - description: Article data
@@ -433,6 +464,10 @@ paths:
         required: true
         schema:
           $ref: '#/definitions/models.Article'
+      - description: Image file (optional)
+        in: formData
+        name: file
+        type: file
       produces:
       - application/json
       responses:
@@ -521,6 +556,7 @@ paths:
     put:
       consumes:
       - application/json
+      - multipart/form-data
       description: Update article information
       parameters:
       - description: Article ID
@@ -528,12 +564,23 @@ paths:
         name: id
         required: true
         type: integer
-      - description: Article data
+      - description: Article data (JSON)
         in: body
         name: article
-        required: true
         schema:
           $ref: '#/definitions/models.Article'
+      - description: Article data (form)
+        in: formData
+        name: article
+        type: object
+      - description: Image file (optional)
+        in: formData
+        name: file
+        type: file
+      - description: Delete existing image if true
+        in: formData
+        name: delete_image
+        type: boolean
       produces:
       - application/json
       responses:
@@ -558,6 +605,38 @@ paths:
             additionalProperties: true
             type: object
       summary: Update an article
+      tags:
+      - article
+  /article/{id}/image:
+    get:
+      description: Retrieve the image for an article
+      parameters:
+      - description: Article ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - image/jpeg
+      - image/png
+      - image/gif
+      - image/webp
+      responses:
+        "200":
+          description: The image file
+          schema:
+            type: file
+        "400":
+          description: Invalid article ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Article or image not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get article image
       tags:
       - article
   /profile:

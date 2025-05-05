@@ -420,7 +420,8 @@ const docTemplate = `{
             "post": {
                 "description": "Create an article with the provided data",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -438,6 +439,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/models.Article"
                         }
+                    },
+                    {
+                        "type": "file",
+                        "description": "Image file (optional)",
+                        "name": "file",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -511,7 +518,8 @@ const docTemplate = `{
             "put": {
                 "description": "Update article information",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -529,13 +537,30 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Article data",
+                        "description": "Article data (JSON)",
                         "name": "article",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/models.Article"
                         }
+                    },
+                    {
+                        "type": "object",
+                        "description": "Article data (form)",
+                        "name": "article",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Image file (optional)",
+                        "name": "file",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Delete existing image if true",
+                        "name": "delete_image",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -611,6 +636,52 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Failed to delete article",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/article/{id}/image": {
+            "get": {
+                "description": "Retrieve the image for an article",
+                "produces": [
+                    "image/jpeg",
+                    "image/png",
+                    "image/gif",
+                    "image/webp"
+                ],
+                "tags": [
+                    "article"
+                ],
+                "summary": "Get article image",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Article ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The image file",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid article ID",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Article or image not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1626,6 +1697,18 @@ const docTemplate = `{
         "models.Article": {
             "type": "object",
             "properties": {
+                "author": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "category": {
+                    "type": "string",
+                    "example": "Health"
+                },
+                "content": {
+                    "type": "string",
+                    "example": "Full article content goes here..."
+                },
                 "created_at": {
                     "type": "string",
                     "example": "2023-01-01T00:00:00Z"
@@ -1634,9 +1717,37 @@ const docTemplate = `{
                     "type": "string",
                     "example": "This is a sample article description."
                 },
+                "has_image": {
+                    "type": "boolean",
+                    "example": true
+                },
                 "id": {
                     "type": "integer",
                     "example": 1
+                },
+                "image_mime_type": {
+                    "type": "string",
+                    "example": "image/jpeg"
+                },
+                "is_published": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "published_at": {
+                    "type": "string",
+                    "example": "2023-01-01T00:00:00Z"
+                },
+                "read_count": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "tags": {
+                    "type": "string",
+                    "example": "diabetes,health,nutrition"
+                },
+                "thumbnail_url": {
+                    "type": "string",
+                    "example": "https://example.com/image.jpg"
                 },
                 "title": {
                     "type": "string",
