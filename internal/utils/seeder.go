@@ -13,12 +13,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// Default number of users to create if not specified
 const DefaultNumUsers = 10000
 
-// SeedUsers creates the specified number of dummy users in the database
 func SeedUsers(numUsers int) error {
-	// Use environment variables for database connection
 	dbHost := getEnv("DB_HOST", "diabetify-db")
 	dbPort := getEnv("DB_PORT", "5439")
 	dbUser := getEnv("DB_USER", "postgres")
@@ -40,10 +37,8 @@ func SeedUsers(numUsers int) error {
 
 	startTime := time.Now()
 
-	// Initialize random number generator (Go 1.20+ compatible)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Check if there are existing users and find the max ID
 	var maxID uint
 	row := db.Model(&models.User{}).Select("COALESCE(MAX(id), 0)").Row()
 	if err := row.Scan(&maxID); err != nil {
@@ -51,9 +46,8 @@ func SeedUsers(numUsers int) error {
 	}
 
 	log.Printf("Current max user ID: %d", maxID)
-	baseIndex := int(maxID) + 1 // Start from the next available ID
+	baseIndex := int(maxID) + 1
 
-	// Batch processing to improve performance
 	batchSize := 1000
 	for i := 0; i < numUsers; i += batchSize {
 		var users []models.User
@@ -64,7 +58,6 @@ func SeedUsers(numUsers int) error {
 		}
 
 		for j := i; j < end; j++ {
-			// Generate user with a unique index based on current max ID
 			user := generateUser(baseIndex+j, r)
 			users = append(users, user)
 		}
@@ -84,22 +77,18 @@ func SeedUsers(numUsers int) error {
 }
 
 func generateUser(index int, r *rand.Rand) models.User {
-	// Generate a secure password hash
 	password, _ := bcrypt.GenerateFromPassword([]byte("TestPassword123!"), bcrypt.DefaultCost)
 
-	// Create random values for user attributes
 	gender := randomGender(r)
 	dob := randomDOB(r)
 
-	// Create user with index for uniqueness
-	// Note: We don't set the ID - let the database auto-increment it
 	return models.User{
 		Name:      fmt.Sprintf("Test User %d", index),
 		Email:     fmt.Sprintf("testuser%d@example.com", index),
 		Gender:    &gender,
 		Password:  string(password),
 		DOB:       &dob,
-		Verified:  true, // Set all users as verified
+		Verified:  true,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -113,10 +102,9 @@ func randomGender(r *rand.Rand) string {
 }
 
 func randomDOB(r *rand.Rand) string {
-	// Generate random date of birth between 1950 and 2000
 	year := r.Intn(50) + 1950
 	month := r.Intn(12) + 1
-	day := r.Intn(28) + 1 // Using 28 to avoid invalid dates
+	day := r.Intn(28) + 1
 
 	return fmt.Sprintf("%d-%02d-%02d", year, month, day)
 }
@@ -131,7 +119,6 @@ func randomIntPtr(r *rand.Rand, min, max int) *int {
 	return &val
 }
 
-// Helper function to get environment variable with fallback
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value

@@ -28,12 +28,15 @@ func main() {
 	// Connect to the database
 	database.ConnectDatabase()
 	db := database.DB
+	if err := database.MigrateDatabase(); err != nil {
+		log.Fatalf("Failed to run database migrations: %v", err)
+	}
 
-	forgotPasswordRepo := repository.NewResetPasswordRepository()
-	userRepo := repository.NewUserRepository()
+	forgotPasswordRepo := repository.NewResetPasswordRepository(db)
+	userRepo := repository.NewUserRepository(db)
 	userController := controllers.NewUserController(userRepo, forgotPasswordRepo)
 
-	verificationRepo := repository.NewVerificationRepository()
+	verificationRepo := repository.NewVerificationRepository(db)
 	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)
 
 	oauthController := controllers.NewOauthController(userRepo)

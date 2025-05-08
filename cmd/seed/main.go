@@ -9,7 +9,6 @@ import (
 )
 
 func main() {
-	// Define subcommands
 	seedCmd := flag.NewFlagSet("seed", flag.ExitOnError)
 	numUsers := seedCmd.Int("users", utils.DefaultNumUsers, "Number of dummy users to create")
 
@@ -21,7 +20,6 @@ func main() {
 	deleteStart := deleteCmd.Int("start", 0, "Start index for user deletion")
 	deleteEnd := deleteCmd.Int("end", 1000, "End index for user deletion")
 
-	// Check if a subcommand is provided
 	if len(os.Args) < 2 {
 		printHelp()
 		os.Exit(1)

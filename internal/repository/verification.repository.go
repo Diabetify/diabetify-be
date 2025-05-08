@@ -1,25 +1,30 @@
 package repository
 
 import (
-	"diabetify/database"
 	"diabetify/internal/models"
 	"log"
 	"time"
+
+	"gorm.io/gorm"
 )
 
-type VerificationRepository struct{}
+type VerificationRepository struct {
+	db *gorm.DB
+}
 
-func NewVerificationRepository() *VerificationRepository {
-	return &VerificationRepository{}
+func NewVerificationRepository(db *gorm.DB) *VerificationRepository {
+	return &VerificationRepository{
+		db: db,
+	}
 }
 
 func (vr *VerificationRepository) CreateVerification(verification *models.Verification) error {
-	return database.DB.Create(verification).Error
+	return vr.db.Create(verification).Error
 }
 
 func (vr *VerificationRepository) FindByEmail(email string) (*models.Verification, error) {
 	var verification models.Verification
-	err := database.DB.Where("email = ?", email).First(&verification).Error
+	err := vr.db.Where("email = ?", email).First(&verification).Error
 	if err != nil {
 		return nil, err
 	}
@@ -28,7 +33,7 @@ func (vr *VerificationRepository) FindByEmail(email string) (*models.Verificatio
 
 func (vr *VerificationRepository) FindByEmailAndCode(email, code string) (*models.Verification, error) {
 	var verification models.Verification
-	err := database.DB.Where("email = ? AND code = ? AND expires_at > ?", email, code, time.Now()).
+	err := vr.db.Where("email = ? AND code = ? AND expires_at > ?", email, code, time.Now()).
 		First(&verification).Error
 	if err != nil {
 		return nil, err
@@ -37,7 +42,7 @@ func (vr *VerificationRepository) FindByEmailAndCode(email, code string) (*model
 }
 
 func (vr *VerificationRepository) DeleteByEmail(email string) error {
-	result := database.DB.Unscoped().Where("email = ?", email).Delete(&models.Verification{})
+	result := vr.db.Unscoped().Where("email = ?", email).Delete(&models.Verification{})
 	if result.Error != nil {
 		log.Println("Error deleting verification:", result.Error)
 	}
