@@ -21,7 +21,7 @@ func SeedUsers(numUsers int) error {
 	dbUser := getEnv("DB_USER", "postgres")
 	dbPassword := getEnv("DB_PASSWORD", "postgres")
 	dbName := getEnv("DB_NAME", "diabetify")
-	dbSSLMode := getEnv("DB_SSLMODE", "disable")
+	dbSSLMode := getEnv("DB_SSLMODE", "require")
 	dbTimeZone := getEnv("DB_TIMEZONE", "Asia/Jakarta")
 
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",

@@ -15,6 +15,7 @@ func MigrateDatabase() error {
 		&models.Article{},
 		&models.Verification{},
 		&models.ResetPassword{},
+		&models.Prediction{},
 	)
 
 	if err != nil {

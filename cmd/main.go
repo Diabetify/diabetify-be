@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"diabetify/database"
 	"diabetify/internal/controllers"
+	"diabetify/internal/ml"
 	"diabetify/internal/repository"
 	"diabetify/routes"
 	"log"
+	"os"
+	"time"
 
 	"diabetify/docs"
 
@@ -19,9 +23,10 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
+
 	// Swagger Documentation
 	docs.SwaggerInfo.Title = "Diabetify API"
-	docs.SwaggerInfo.Description = "This is api of Diabetify App."
+	docs.SwaggerInfo.Description = "This is api of Diabetify App with gRPC ML Service."
 	docs.SwaggerInfo.Version = "1.0"
 	docs.SwaggerInfo.Schemes = []string{"http", "https"}
 
@@ -32,26 +37,62 @@ func main() {
 		log.Fatalf("Failed to run database migrations: %v", err)
 	}
 
+	// Initialize repositories
 	forgotPasswordRepo := repository.NewResetPasswordRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	userController := controllers.NewUserController(userRepo, forgotPasswordRepo)
-
 	verificationRepo := repository.NewVerificationRepository(db)
-	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)
+	activityRepo := repository.NewActivityRepository(db)
+	articleRepo := repository.NewArticleRepository(db)
+	profileRepo := repository.NewUserProfileRepository(db)
+	predictionRepo := repository.NewPredictionRepository(db)
 
+	// Initialize ML gRPC client
+	mlServiceAddress := os.Getenv("ML_SERVICE_ADDRESS")
+	if mlServiceAddress == "" {
+		mlServiceAddress = "localhost:50051" // Default gRPC address
+	}
+
+	log.Printf("Connecting to ML service via gRPC at %s...", mlServiceAddress)
+	mlClient, err := ml.NewGRPCMLClient(mlServiceAddress)
+	if err != nil {
+		log.Fatal("Failed to create ML gRPC client:", err)
+	}
+	defer mlClient.Close()
+
+	// Test ML service connection
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := mlClient.HealthCheck(ctx); err != nil {
+		log.Printf("Warning: ML service health check failed: %v", err)
+		log.Println("The application will start, but predictions will fail until ML service is available")
+	} else {
+		log.Println("✅ ML service gRPC connection established successfully")
+	}
+
+	// Initialize controllers
+	userController := controllers.NewUserController(userRepo, forgotPasswordRepo)
+	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)
 	oauthController := controllers.NewOauthController(userRepo)
+	activityController := controllers.NewActivityController(activityRepo)
+	articleController := controllers.NewArticleController(articleRepo)
+	profileController := controllers.NewUserProfileController(profileRepo)
+	predictionController := controllers.NewPredictionController(predictionRepo, mlClient) // Using gRPC client
+
+	// Setup Gin router
 	router := gin.Default()
 
-	activityRepo := repository.NewActivityRepository(db)
-	activityController := controllers.NewActivityController(activityRepo)
+	// Add a root endpoint
+	router.GET("/", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message":    "Diabetify API is running",
+			"version":    "1.0.0",
+			"status":     "healthy",
+			"ml_service": "gRPC",
+		})
+	})
 
-	articleRepo := repository.NewArticleRepository(db)
-	articleController := controllers.NewArticleController(articleRepo)
-
-	profileRepo := repository.NewUserProfileRepository(db)
-	profileController := controllers.NewUserProfileController(profileRepo)
-
-	// Register user routes
+	// Register routes
 	routes.RegisterUserRoutes(router, userController)
 	routes.RegisterVerificationRoutes(router, verificationController)
 	routes.RegisterSwaggerRoutes(router)
@@ -59,8 +100,20 @@ func main() {
 	routes.RegisterActivityRoutes(router, activityController)
 	routes.RegisterArticleRoutes(router, articleController)
 	routes.RegisterUserProfileRoutes(router, profileController)
+	routes.RegisterPredictionRoutes(router, predictionController)
 
 	// Start the server
-	log.Println("Server is running on port 8080...")
-	router.Run(":8080")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("🚀 Server starting on port %s", port)
+	log.Printf("📋 API Documentation available at http://localhost:%s/swagger/index.html", port)
+	log.Printf("🔗 ML Health check: http://localhost:%s/api/v1/predict/health", port)
+	log.Printf("🎯 Prediction endpoint: POST http://localhost:%s/api/v1/predict", port)
+
+	if err := router.Run(":" + port); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
 }

@@ -1,0 +1,71 @@
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type Prediction struct {
+	ID                                  uint           `gorm:"primaryKey" json:"id" example:"1"`
+	CreatedAt                           time.Time      `json:"created_at" example:"2023-01-01T00:00:00Z"`
+	UpdatedAt                           time.Time      `json:"updated_at" example:"2023-01-01T00:00:00Z"`
+	DeletedAt                           gorm.DeletedAt `gorm:"index" json:"-" swaggerignore:"true"`
+	UserID                              uint           `json:"user_id" example:"1"`
+	User                                User           `gorm:"foreignKey:UserID" json:"-"`
+	RiskScore                           float64        `json:"risk_score" example:"0.75"`
+	Age                                 int            `json:"age" example:"30"`
+	AgeContribution                     float64        `json:"age_contribution" example:"0.1"`
+	AgeImpact                           float64        `json:"age_impact" example:"0.2"`
+	BMI                                 float64        `json:"bmi" example:"22.5"`
+	BMIContribution                     float64        `json:"bmi_contribution" example:"0.15"`
+	BMIImpact                           float64        `json:"bmi_impact" example:"0.25"`
+	BrinkmanScore                       float64        `json:"brinkman_score" example:"0.5"`
+	BrinkmanScoreContribution           float64        `json:"brinkman_score_contribution" example:"0.2"`
+	BrinkmanScoreImpact                 float64        `json:"brinkman_score_impact" example:"0.3"`
+	IsHypertension                      bool           `json:"is_hypertension" example:"true"`
+	IsHypertensionContribution          float64        `json:"is_hypertension_contribution" example:"0.1"`
+	IsHypertensionImpact                float64        `json:"is_hypertension_impact" example:"0.2"`
+	IsMacrosomicBaby                    bool           `json:"is_macrosomic_baby" example:"false"`
+	IsMacrosomicBabyContribution        float64        `json:"is_macrosomic_baby_contribution" example:"0.05"`
+	IsMacrosomicBabyImpact              float64        `json:"is_macrosomic_baby_impact" example:"0.1"`
+	SmokingStatus                       string         `json:"smoking_status" example:"non_smoker"`
+	SmokingStatusContribution           float64        `json:"smoking_status_contribution" example:"0.1"`
+	SmokingStatusImpact                 float64        `json:"smoking_status_impact" example:"0.2"`
+	PhysicalActivityMinutes             int            `json:"physical_activity_minutes" example:"150"`
+	PhysicalActivityMinutesContribution float64        `json:"physical_activity_minutes_contribution" example:"0.1"`
+	PhysicalActivityMinutesImpact       float64        `json:"physical_activity_minutes_impact" example:"0.2"`
+}
+
+type PredictionRequest struct {
+	Features []float64 `json:"features" binding:"required"`
+}
+
+type ExplanationItem struct {
+	Contribution float64 `json:"contribution"`
+	Impact       int     `json:"impact"`
+}
+
+type PredictionResponse struct {
+	Prediction  float64                    `json:"prediction"`
+	Explanation map[string]ExplanationItem `json:"explanation,omitempty"`
+	ElapsedTime float64                    `json:"elapsed_time_seconds,omitempty"`
+	Timestamp   time.Time                  `json:"timestamp"`
+}
+
+type UpdateModelRequest struct {
+	XNew   [][]float64 `json:"x_new" binding:"required"`
+	YNew   []float64   `json:"y_new" binding:"required"`
+	XVal   [][]float64 `json:"x_val" binding:"required"`
+	YVal   []float64   `json:"y_val" binding:"required"`
+	Epochs int         `json:"epochs" binding:"required,min=1"`
+}
+type UpdateModelResponse struct {
+	Status      string    `json:"status"`
+	AUCBefore   float64   `json:"auc_before"`
+	AUCAfter    float64   `json:"auc_after"`
+	PRAUCBefore float64   `json:"pr_auc_before"`
+	PRAUCAfter  float64   `json:"pr_auc_after"`
+	ElapsedTime float64   `json:"elapsed_time"`
+	Timestamp   time.Time `json:"timestamp"`
+}
