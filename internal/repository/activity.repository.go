@@ -15,6 +15,8 @@ type ActivityRepository interface {
 	Update(activity *models.Activity) error
 	Delete(id uint) error
 	FindByUserIDAndActivityDateRange(userID uint, startDate, endDate time.Time) ([]models.Activity, error)
+	GetActivitiesByUserIDAndTypeAndDateRange(userID uint, activityType string, startDate, endDate time.Time) ([]models.Activity, error)
+	GetActivitiesByUserIDAndType(userID uint, activityType string) ([]models.Activity, error)
 }
 
 type activityRepository struct {
@@ -63,7 +65,6 @@ func (r *activityRepository) FindByUserIDAndActivityDateRange(userID uint, start
 		Order("activity_date DESC").
 		Find(&activities).Error
 
-	// Log the result
 	if err != nil {
 		log.Printf("Error querying activities: %v", err)
 	} else {
@@ -73,5 +74,24 @@ func (r *activityRepository) FindByUserIDAndActivityDateRange(userID uint, start
 		}
 	}
 
+	return activities, err
+}
+func (r *activityRepository) GetActivitiesByUserIDAndTypeAndDateRange(userID uint, activityType string, startDate, endDate time.Time) ([]models.Activity, error) {
+	var activities []models.Activity
+
+	err := r.db.Where("user_id = ? AND activity_type = ? AND activity_date BETWEEN ? AND ?",
+		userID, activityType, startDate, endDate).
+		Order("activity_date DESC").
+		Find(&activities).Error
+
+	return activities, err
+}
+
+func (r *activityRepository) GetActivitiesByUserIDAndType(userID uint, activityType string) ([]models.Activity, error) {
+	var activities []models.Activity
+
+	err := r.db.Where("user_id = ? AND activity_type = ?", userID, activityType).
+		Order("activity_date DESC").
+		Find(&activities).Error
 	return activities, err
 }

@@ -77,7 +77,15 @@ func main() {
 	activityController := controllers.NewActivityController(activityRepo)
 	articleController := controllers.NewArticleController(articleRepo)
 	profileController := controllers.NewUserProfileController(profileRepo)
-	predictionController := controllers.NewPredictionController(predictionRepo, mlClient) // Using gRPC client
+
+	// Updated prediction controller with all required repositories
+	predictionController := controllers.NewPredictionController(
+		predictionRepo, // Prediction repository
+		userRepo,       // User repository for getting DOB
+		profileRepo,    // Profile repository for getting user profile data
+		activityRepo,   // Activity repository for calculating Brinkman index and physical activity
+		mlClient,       // gRPC ML client
+	)
 
 	// Setup Gin router
 	router := gin.Default()
@@ -89,6 +97,7 @@ func main() {
 			"version":    "1.0.0",
 			"status":     "healthy",
 			"ml_service": "gRPC",
+			"prediction": "Auto-prediction from user profile",
 		})
 	})
 
@@ -110,8 +119,9 @@ func main() {
 
 	log.Printf("🚀 Server starting on port %s", port)
 	log.Printf("📋 API Documentation available at http://localhost:%s/swagger/index.html", port)
-	log.Printf("🔗 ML Health check: http://localhost:%s/api/v1/predict/health", port)
-	log.Printf("🎯 Prediction endpoint: POST http://localhost:%s/api/v1/predict", port)
+	log.Printf("🔗 ML Health check: http://localhost:%s/prediction/predict/health", port)
+	log.Printf("🎯 Auto-Prediction endpoint: POST http://localhost:%s/prediction/", port)
+	log.Printf("📊 Get predictions: GET http://localhost:%s/prediction/me", port)
 
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)

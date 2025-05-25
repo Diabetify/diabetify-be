@@ -176,8 +176,8 @@ func (c *grpcMLClient) validateFeatures(features []float64) error {
 	}
 
 	// Validate binary features (0/1)
-	if !c.isBinary(features[1]) || !c.isBinary(features[2]) || !c.isBinary(features[5]) {
-		return errors.New("smoking_status, is_macrosomic_baby, and is_hypertension must be 0 or 1")
+	if !c.isBinary(features[2]) || !c.isBinary(features[5]) {
+		return errors.New("is_macrosomic_baby, and is_hypertension must be 0 or 1")
 	}
 
 	// Validate BMI (typical range)

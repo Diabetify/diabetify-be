@@ -5,6 +5,9 @@ import (
 	"diabetify/internal/ml"
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
+	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,39 +15,44 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PredictionController handles prediction-related requests
 type PredictionController struct {
-	repo     repository.PredictionRepository
-	mlClient ml.MLClient
+	repo         repository.PredictionRepository
+	userRepo     *repository.UserRepository
+	profileRepo  repository.UserProfileRepository
+	activityRepo repository.ActivityRepository
+	mlClient     ml.MLClient
 }
 
-// NewPredictionController creates a new prediction controller
 func NewPredictionController(
 	repo repository.PredictionRepository,
+	userRepo *repository.UserRepository,
+	profileRepo repository.UserProfileRepository,
+	activityRepo repository.ActivityRepository,
 	mlClient ml.MLClient,
 ) *PredictionController {
 	return &PredictionController{
-		repo:     repo,
-		mlClient: mlClient,
+		repo:         repo,
+		userRepo:     userRepo,
+		profileRepo:  profileRepo,
+		activityRepo: activityRepo,
+		mlClient:     mlClient,
 	}
 }
 
 // MakePrediction godoc
-// @Summary Make a prediction using ML model via gRPC
-// @Description Send features to ML model via gRPC and get a prediction (requires authentication)
+// @Summary Make a prediction using user's profile data automatically
+// @Description Automatically fetch user data from database and make diabetes risk prediction via gRPC (requires authentication)
 // @Tags prediction
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param prediction body models.PredictionRequest true "Features array: [age, smoking_status, is_macrosomic_baby, brinkman_index, BMI, is_hypertension, physical_activity_minutes]"
 // @Success 200 {object} map[string]interface{} "Prediction result"
-// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 400 {object} map[string]interface{} "Incomplete user profile"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "User profile not found"
 // @Failure 500 {object} map[string]interface{} "Prediction failed"
-// @Router /predict [post]
+// @Router /prediction [post]
 func (pc *PredictionController) MakePrediction(c *gin.Context) {
-	var request models.PredictionRequest
-
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -54,21 +62,39 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		return
 	}
 
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+	// Get user data
+	user, err := pc.userRepo.GetUserByID(userID.(uint))
+	if err != nil {
+		log.Printf("Error getting user by ID %d: %v", userID.(uint), err)
+		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
-			"message": "Invalid request data",
+			"message": "User not found",
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	// Validate features array length
-	if len(request.Features) != 7 {
+	// Get user profile
+	profile, err := pc.profileRepo.FindByUserID(userID.(uint))
+	log.Printf("Fetching profile for user ID %d", userID.(uint))
+	if err != nil {
+		log.Printf("Error getting user profile for user ID %d: %v", userID.(uint), err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User profile not found. Please complete your profile first.",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Calculate features from user data
+	features, featureInfo, err := pc.calculateFeaturesFromProfile(user, profile, userID.(uint))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status":   "error",
-			"message":  "Invalid features array: expected 7 features",
-			"expected": "Features order: [age, smoking_status, is_macrosomic_baby, brinkman_index, BMI, is_hypertension, physical_activity_minutes]",
+			"status":  "error",
+			"message": "Incomplete profile data for prediction",
+			"error":   err.Error(),
+			"help":    "Please ensure all required profile fields are filled: age, weight, height, smoking status, macrosomic baby history, hypertension status",
 		})
 		return
 	}
@@ -77,8 +103,11 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
+	// Log the features being sent for prediction
+	log.Printf("Features for prediction: %v", features)
+
 	// Call the ML service via gRPC
-	response, err := pc.mlClient.Predict(ctx, request.Features)
+	response, err := pc.mlClient.Predict(ctx, features)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -86,26 +115,6 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 			"error":   err.Error(),
 		})
 		return
-	}
-
-	// Convert the numeric features to proper types
-	age := int(request.Features[0])
-	smokingStatusValue := int(request.Features[1])
-	isMacrosomicBaby := request.Features[2] > 0
-	brinkmanScore := request.Features[3]
-	bmi := request.Features[4]
-	isHypertension := request.Features[5] > 0
-	physicalActivityMinutes := int(request.Features[6])
-
-	// Convert smoking status numeric value to string
-	var smokingStatus string
-	switch smokingStatusValue {
-	case 0:
-		smokingStatus = "non_smoker"
-	case 1:
-		smokingStatus = "smoker"
-	default:
-		smokingStatus = "unknown"
 	}
 
 	// Helper function to safely extract explanation values
@@ -130,31 +139,31 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		UserID:    userID.(uint),
 		RiskScore: response.Prediction,
 
-		Age:             age,
+		Age:             featureInfo["age"].(int),
 		AgeContribution: ageContribution,
 		AgeImpact:       ageImpact,
 
-		BMI:             bmi,
+		BMI:             featureInfo["bmi"].(float64),
 		BMIContribution: bmiContribution,
 		BMIImpact:       bmiImpact,
 
-		BrinkmanScore:             brinkmanScore,
+		BrinkmanScore:             featureInfo["brinkman_score"].(float64),
 		BrinkmanScoreContribution: brinkmanContribution,
 		BrinkmanScoreImpact:       brinkmanImpact,
 
-		IsHypertension:             isHypertension,
+		IsHypertension:             featureInfo["is_hypertension"].(bool),
 		IsHypertensionContribution: hypertensionContribution,
 		IsHypertensionImpact:       hypertensionImpact,
 
-		IsMacrosomicBaby:             isMacrosomicBaby,
+		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(bool),
 		IsMacrosomicBabyContribution: macrosomicContribution,
 		IsMacrosomicBabyImpact:       macrosomicImpact,
 
-		SmokingStatus:             smokingStatus,
+		SmokingStatus:             fmt.Sprintf("%v", featureInfo["smoking_status"]), // Convert to string
 		SmokingStatusContribution: smokingContribution,
 		SmokingStatusImpact:       smokingImpact,
 
-		PhysicalActivityMinutes:             physicalActivityMinutes,
+		PhysicalActivityMinutes:             featureInfo["physical_activity_minutes"].(int),
 		PhysicalActivityMinutesContribution: activityContribution,
 		PhysicalActivityMinutesImpact:       activityImpact,
 	}
@@ -172,25 +181,203 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	// Return comprehensive response
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"message": "Prediction successful via gRPC",
+		"message": "Prediction successful via gRPC using your profile data",
 		"data": gin.H{
 			"prediction_id":   prediction.ID,
 			"risk_score":      response.Prediction,
 			"risk_percentage": response.Prediction * 100,
 			"ml_service_time": response.ElapsedTime,
 			"timestamp":       response.Timestamp,
-			"features_analyzed": gin.H{
-				"age":                       age,
-				"smoking_status":            smokingStatus,
-				"is_macrosomic_baby":        isMacrosomicBaby,
-				"brinkman_score":            brinkmanScore,
-				"bmi":                       bmi,
-				"is_hypertension":           isHypertension,
-				"physical_activity_minutes": physicalActivityMinutes,
+			"user_data_used": gin.H{
+				"age":                       featureInfo["age"],
+				"smoking_status":            featureInfo["smoking_status"],
+				"is_macrosomic_baby":        featureInfo["is_macrosomic_baby"],
+				"brinkman_score":            featureInfo["brinkman_score"],
+				"bmi":                       featureInfo["bmi"],
+				"is_hypertension":           featureInfo["is_hypertension"],
+				"physical_activity_minutes": featureInfo["physical_activity_minutes"],
 			},
 			"feature_explanations": response.Explanation,
 		},
 	})
+}
+
+func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint) ([]float64, map[string]interface{}, error) {
+	// Check BMI
+	if profile.BMI == nil {
+		return nil, nil, fmt.Errorf("BMI is required but not found")
+	}
+	bmi := *profile.BMI
+
+	// Check MacrosomicBaby (safely handle nil)
+	if profile.MacrosomicBaby == nil {
+		return nil, nil, fmt.Errorf("macrosomic baby history is required but not found")
+	}
+	isMacrosomicBaby := *profile.MacrosomicBaby
+
+	// Check Hypertension (safely handle nil)
+	if profile.Hypertension == nil {
+		return nil, nil, fmt.Errorf("hypertension status is required but not found")
+	}
+	isHypertension := *profile.Hypertension
+
+	// Calculate age from string DOB
+	if user.DOB == nil {
+		return nil, nil, fmt.Errorf("date of birth is required but not found")
+	}
+
+	// Parse the DOB string - try multiple formats
+	var dobTime time.Time
+	var err error
+
+	dobTime, err = time.Parse(time.RFC3339, *user.DOB)
+	if err != nil {
+		dobTime, err = time.Parse("2006-01-02", *user.DOB)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid date of birth format. Expected YYYY-MM-DD, got: %s", *user.DOB)
+		}
+	}
+
+	// Calculate age
+	now := time.Now()
+	age := now.Year() - dobTime.Year()
+	if now.YearDay() < dobTime.YearDay() {
+		age--
+	}
+
+	// Calculate smoking status based on activity data (last 8 weeks)
+	smokingStatus, err := pc.calculateSmokingStatus(userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to calculate smoking status: %v", err)
+	}
+
+	// Calculate Brinkman index from smoking activities
+	brinkmanIndex, err := pc.calculateBrinkmanIndex(userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
+	}
+
+	// Calculate physical activity (average minutes per 8 weeks)
+	physicalActivityMinutes, err := pc.calculatePhysicalActivityMinutes(userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
+	}
+
+	// Create features array for ML model
+	features := []float64{
+		float64(age),                     // 1. Age
+		float64(smokingStatus),           // 2. Smoking status (0, 1, or 2)
+		boolToFloat(isMacrosomicBaby),    // 3. Is macrosomic baby (0 or 1)
+		brinkmanIndex,                    // 4. Brinkman index
+		bmi,                              // 5. BMI
+		boolToFloat(isHypertension),      // 6. Is hypertension (0 or 1)
+		float64(physicalActivityMinutes), // 7. Physical activity minutes
+	}
+
+	featureInfo := map[string]interface{}{
+		"age":                       age,
+		"smoking_status":            smokingStatus,
+		"is_macrosomic_baby":        isMacrosomicBaby,
+		"brinkman_score":            brinkmanIndex,
+		"bmi":                       bmi,
+		"is_hypertension":           isHypertension,
+		"physical_activity_minutes": physicalActivityMinutes,
+	}
+
+	return features, featureInfo, nil
+}
+
+// Helper functions
+func boolToFloat(b bool) float64 {
+	if b {
+		return 1.0
+	}
+	return 0.0
+}
+
+// calculateSmokingStatus determines smoking status based on activity data (8 weeks)
+// Returns: 0 = never smoked, 1 = used to smoke (>8 weeks ago), 2 = current smoker (within 8 weeks)
+func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error) {
+	// Get smoking activities from last 8 weeks
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -56)
+
+	recentActivities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
+	if err != nil {
+		return 0, err
+	}
+
+	// If user has smoking activities in last 8 weeks = current smoker
+	if len(recentActivities) > 0 {
+		return 2, nil
+	}
+
+	// Check if user has any smoking activities before 8 weeks ago
+	historicalStartDate := endDate.AddDate(-10, 0, 0) // Check last 10 years
+	allActivities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", historicalStartDate, startDate)
+	if err != nil {
+		return 0, err
+	}
+
+	// If user has smoking activities but not in recent 8 weeks = pernah merokok
+	if len(allActivities) > 0 {
+		return 1, nil
+	}
+
+	// No smoking activities found = never smoked
+	return 0, nil
+}
+
+// calculateBrinkmanIndex calculates Brinkman index from smoking activities
+func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, error) {
+	// Get smoking activities from last 8 weeks for current smokers
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -56)
+
+	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
+	if err != nil {
+		return 0.0, err
+	}
+
+	if len(activities) == 0 {
+		return 0.0, nil
+	}
+
+	// Calculate average cigarettes per day
+	totalCigarettes := 0
+	for _, activity := range activities {
+		totalCigarettes += activity.Value
+	}
+
+	avgCigarettesPerDay := float64(totalCigarettes) / 56.0
+
+	// Estimate years of smoking - Harus ditambah logika untuk menghitung tahun merokok
+	// For now, assume if they're actively smoking, they've been smoking for some years
+	estimatedYears := 1.0
+
+	// Brinkman Index = cigarettes per day × years of smoking
+	brinkmanIndex := avgCigarettesPerDay * estimatedYears
+
+	return math.Round(brinkmanIndex*10) / 10, nil
+}
+
+// calculatePhysicalActivityMinutes calculates average workout minutes per 8 weeks
+func (pc *PredictionController) calculatePhysicalActivityMinutes(userID uint) (int, error) {
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -56) // Last 8 weeks = 56 days
+
+	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
+	if err != nil {
+		return 0, err
+	}
+
+	totalMinutes := 0
+	for _, activity := range activities {
+		totalMinutes += activity.Value
+	}
+
+	// Return total minutes in the 8-week period
+	return totalMinutes, nil
 }
 
 // TestMLConnection godoc
@@ -200,7 +387,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 // @Produce json
 // @Success 200 {object} map[string]interface{} "ML service is healthy"
 // @Failure 500 {object} map[string]interface{} "ML service is not reachable"
-// @Router /predict/health [get]
+// @Router /prediction/predict/health [get]
 func (pc *PredictionController) TestMLConnection(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -221,7 +408,16 @@ func (pc *PredictionController) TestMLConnection(c *gin.Context) {
 	})
 }
 
-// GetUserPredictions - Keep your existing implementation
+// GetUserPredictions godoc
+// @Summary Get user's prediction history
+// @Description Retrieve prediction history for the authenticated user
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} map[string]interface{} "Prediction history retrieved successfully"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Failed to retrieve prediction history"
+// @Router /prediction/me [get]
 func (pc *PredictionController) GetUserPredictions(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -250,7 +446,19 @@ func (pc *PredictionController) GetUserPredictions(c *gin.Context) {
 	})
 }
 
-// GetPredictionsByDateRange - Keep your existing implementation
+// GetPredictionsByDateRange godoc
+// @Summary Get user's prediction history by date range
+// @Description Retrieve prediction history for the authenticated user within a date range
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Param start_date query string true "Start date (YYYY-MM-DD)"
+// @Param end_date query string true "End date (YYYY-MM-DD)"
+// @Success 200 {object} map[string]interface{} "Prediction history retrieved successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid date format"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Failed to retrieve prediction history"
+// @Router /prediction/me/date-range [get]
 func (pc *PredictionController) GetPredictionsByDateRange(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -304,7 +512,19 @@ func (pc *PredictionController) GetPredictionsByDateRange(c *gin.Context) {
 	})
 }
 
-// GetPredictionByID - Keep your existing implementation
+// GetPredictionByID godoc
+// @Summary Get prediction by ID
+// @Description Retrieve a specific prediction by ID
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path int true "Prediction ID"
+// @Success 200 {object} map[string]interface{} "Prediction retrieved successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid prediction ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 404 {object} map[string]interface{} "Prediction not found"
+// @Router /prediction/{id} [get]
 func (pc *PredictionController) GetPredictionByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -349,7 +569,19 @@ func (pc *PredictionController) GetPredictionByID(c *gin.Context) {
 	})
 }
 
-// DeletePrediction - Keep your existing implementation
+// DeletePrediction godoc
+// @Summary Delete a prediction
+// @Description Delete a specific prediction by ID
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path int true "Prediction ID"
+// @Success 200 {object} map[string]interface{} "Prediction deleted successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid prediction ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 404 {object} map[string]interface{} "Prediction not found"
+// @Router /prediction/{id} [delete]
 func (pc *PredictionController) DeletePrediction(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
