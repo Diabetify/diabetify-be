@@ -1,9 +1,13 @@
 package controllers
 
 import (
+	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
 	"diabetify/internal/utils"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type UserController struct {
@@ -39,6 +42,46 @@ type ResetPasswordRequest struct {
 	NewPassword string `json:"new_password" binding:"required"`
 }
 
+func hashPassword(password string) (string, error) {
+	salt := make([]byte, 8)
+	_, err := rand.Read(salt)
+	if err != nil {
+		return "", err
+	}
+
+	// SHA256
+	h := sha256.New()
+	h.Write([]byte(password))
+	h.Write(salt)
+	hash := h.Sum(nil)
+
+	return hex.EncodeToString(salt) + hex.EncodeToString(hash), nil
+}
+
+// Verify password
+func verifyPassword(hashedPassword, password string) bool {
+	if len(hashedPassword) < 16 {
+		return false
+	}
+
+	salt, err := hex.DecodeString(hashedPassword[:16])
+	if err != nil {
+		return false
+	}
+
+	expectedHash, err := hex.DecodeString(hashedPassword[16:])
+	if err != nil {
+		return false
+	}
+
+	h := sha256.New()
+	h.Write([]byte(password))
+	h.Write(salt)
+	hash := h.Sum(nil)
+
+	return bytes.Equal(hash, expectedHash)
+}
+
 // CreateUser godoc
 // @Summary Create a new user
 // @Description Create a user with the provided data
@@ -61,7 +104,8 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 		})
 		return
 	}
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+
+	hashedPassword, err := hashPassword(user.Password)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -70,7 +114,7 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 		})
 		return
 	}
-	user.Password = string(hashedPassword)
+	user.Password = hashedPassword
 
 	user.Verified = false
 
@@ -238,8 +282,8 @@ func (uc *UserController) LoginUser(c *gin.Context) {
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginRequest.Password))
-	if err != nil {
+	// Use simple SHA256
+	if !verifyPassword(user.Password, loginRequest.Password) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status":  "error",
 			"message": "Unauthorized",
@@ -247,6 +291,7 @@ func (uc *UserController) LoginUser(c *gin.Context) {
 		})
 		return
 	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": user.ID,
 		"email":   user.Email,
@@ -397,8 +442,8 @@ func (uc *UserController) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Hash the new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	// Hash the new password with simple SHA256
+	hashedPassword, err := hashPassword(req.NewPassword)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -408,7 +453,7 @@ func (uc *UserController) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	user.Password = string(hashedPassword)
+	user.Password = hashedPassword
 	if err := uc.repo.UpdateUser(user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -489,8 +534,8 @@ func (uc *UserController) PatchUser(c *gin.Context) {
 			return
 		}
 
-		// Hash the new password
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		// Hash the new password with simple SHA256
+		hashedPassword, err := hashPassword(password)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
@@ -499,7 +544,7 @@ func (uc *UserController) PatchUser(c *gin.Context) {
 			})
 			return
 		}
-		patchData["password"] = string(hashedPassword)
+		patchData["password"] = hashedPassword
 	}
 
 	// Prevent user from changing their role

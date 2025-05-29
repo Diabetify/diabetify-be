@@ -24,22 +24,14 @@ func ConnectDatabase() {
 	// Create DSN string with only supported connection parameters
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s "+
-			"application_name=diabetify connect_timeout=10 statement_timeout=30000 "+
-			"idle_in_transaction_session_timeout=60000 TimeZone=Asia/Jakarta",
+			"application_name=diabetify TimeZone=Asia/Jakarta",
 		host, user, password, dbname, port, sslmode,
 	)
-
-	// Configure GORM logger - reduce logging in production
-	logLevel := logger.Info
-	if os.Getenv("APP_ENV") == "production" {
-		logLevel = logger.Error // Only log errors in production
-	}
 
 	newLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
 		logger.Config{
 			SlowThreshold:             time.Millisecond * 500, // Log queries slower than 500ms
-			LogLevel:                  logLevel,
 			Colorful:                  true,
 			IgnoreRecordNotFoundError: true, // Don't log record not found errors
 		},
@@ -63,19 +55,22 @@ func ConnectDatabase() {
 		log.Fatalf("Failed to get database connection: %v", err)
 	}
 
-	// Optimize connection pool settings
-	sqlDB.SetMaxIdleConns(50)                  // Increased idle connections
-	sqlDB.SetMaxOpenConns(300)                 // Match PostgreSQL max_connections
-	sqlDB.SetConnMaxLifetime(30 * time.Minute) // Shorter connection lifetime for better resource usage
-	sqlDB.SetConnMaxIdleTime(10 * time.Minute) // Close idle connections sooner
+	// Set connection pools
+	sqlDB.SetMaxIdleConns(25)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(2 * time.Minute)
 
-	// Verify connection
 	if err := sqlDB.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
 
 	log.Println("Connected to database successfully")
-	log.Printf("Max open connections: %d", 300)
+	log.Printf("Database connection pool configured:")
+	log.Printf("  - Max open connections: %d", 100)
+	log.Printf("  - Max idle connections: %d", 25)
+	log.Printf("  - Connection max lifetime: %v", 5*time.Minute)
+	log.Printf("  - Connection max idle time: %v", 2*time.Minute)
 
 	DB = db
 }
