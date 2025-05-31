@@ -10,7 +10,7 @@ import (
 
 type ActivityRepository interface {
 	Create(activity *models.Activity) error
-	FindAllByUserID(userID uint) ([]models.Activity, error)
+	FindAllByUserID(userID uint, limit int) ([]models.Activity, error)
 	FindByID(id uint) (*models.Activity, error)
 	Update(activity *models.Activity) error
 	Delete(id uint) error
@@ -32,9 +32,9 @@ func (r *activityRepository) Create(activity *models.Activity) error {
 	return r.db.Create(activity).Error
 }
 
-func (r *activityRepository) FindAllByUserID(userID uint) ([]models.Activity, error) {
+func (r *activityRepository) FindAllByUserID(userID uint, limit int) ([]models.Activity, error) {
 	var activities []models.Activity
-	err := r.db.Where("user_id = ?", userID).Find(&activities).Order("activity_date DESC").Error
+	err := r.db.Where("user_id = ?", userID).Limit(limit).Order("activity_date DESC").Find(&activities).Error
 	return activities, err
 }
 

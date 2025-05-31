@@ -448,7 +448,23 @@ func (pc *PredictionController) GetUserPredictions(c *gin.Context) {
 		return
 	}
 
-	predictions, err := pc.repo.GetPredictionsByUserID(userID.(uint))
+	// Get Limit Params
+	limitStr := c.Query("limit")
+	limit := 10 // Default limit
+	if limitStr != "" {
+		var err error
+		limit, err = strconv.Atoi(limitStr)
+		if err != nil || limit <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Invalid limit parameter",
+				"error":   "Limit must be a positive integer",
+			})
+			return
+		}
+	}
+
+	predictions, err := pc.repo.GetPredictionsByUserID(userID.(uint), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",

@@ -9,7 +9,7 @@ import (
 
 type PredictionRepository interface {
 	SavePrediction(prediction *models.Prediction) error
-	GetPredictionsByUserID(userID uint) ([]models.Prediction, error)
+	GetPredictionsByUserID(userID uint, limit int) ([]models.Prediction, error)
 	GetPredictionsByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]models.Prediction, error)
 	GetPredictionByID(id uint) (*models.Prediction, error)
 	DeletePrediction(id uint) error
@@ -27,10 +27,9 @@ func NewPredictionRepository(db *gorm.DB) PredictionRepository {
 func (r *predictionRepository) SavePrediction(prediction *models.Prediction) error {
 	return r.db.Create(prediction).Error
 }
-
-func (r *predictionRepository) GetPredictionsByUserID(userID uint) ([]models.Prediction, error) {
+func (r *predictionRepository) GetPredictionsByUserID(userID uint, limit int) ([]models.Prediction, error) {
 	var predictions []models.Prediction
-	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&predictions).Order("created_at DESC").Error
+	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Limit(limit).Find(&predictions).Error
 	return predictions, err
 }
 
@@ -62,24 +61,18 @@ type PredictionScore struct {
 }
 
 func (r *predictionRepository) GetPredictionScoreByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]PredictionScore, error) {
-	var predictions []models.Prediction
-	err := r.db.Model(&models.Prediction{}).
+	var scores []PredictionScore
+
+	err := r.db.Table("predictions").
 		Select("risk_score, created_at").
 		Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
-		Find(&predictions).
+		Where("(DATE(created_at), created_at) IN (?)",
+			r.db.Table("predictions").
+				Select("DATE(created_at), MAX(created_at)").
+				Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
+				Group("DATE(created_at)")).
 		Order("created_at DESC").
-		Error
-	if err != nil {
-		return nil, err
-	}
+		Scan(&scores).Error
 
-	var scores []PredictionScore
-	for _, prediction := range predictions {
-		scores = append(scores, PredictionScore{
-			RiskScore: prediction.RiskScore,
-			CreatedAt: prediction.CreatedAt,
-		})
-	}
-
-	return scores, nil
+	return scores, err
 }

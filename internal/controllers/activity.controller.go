@@ -92,6 +92,12 @@ func (ac *ActivityController) CreateActivity(c *gin.Context) {
 func (ac *ActivityController) GetCurrentUserActivities(c *gin.Context) {
 	// Get user ID from the JWT token (set by middleware)
 	userID, exists := c.Get("user_id")
+	// Get limit from parameters
+	limitStr := c.Query("limit")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		limit = 10
+	}
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status":  "error",
@@ -101,7 +107,7 @@ func (ac *ActivityController) GetCurrentUserActivities(c *gin.Context) {
 		return
 	}
 
-	activities, err := ac.repo.FindAllByUserID(userID.(uint))
+	activities, err := ac.repo.FindAllByUserID(userID.(uint), limit)
 	// separate activity by type ["smoke", "workout"]
 	groupedActivities := make(map[string]interface{})
 
