@@ -34,7 +34,7 @@ func (r *activityRepository) Create(activity *models.Activity) error {
 
 func (r *activityRepository) FindAllByUserID(userID uint) ([]models.Activity, error) {
 	var activities []models.Activity
-	err := r.db.Where("user_id = ?", userID).Find(&activities).Error
+	err := r.db.Where("user_id = ?", userID).Find(&activities).Order("activity_date DESC").Error
 	return activities, err
 }
 
