@@ -17,6 +17,7 @@ type ActivityRepository interface {
 	FindByUserIDAndActivityDateRange(userID uint, startDate, endDate time.Time) ([]models.Activity, error)
 	GetActivitiesByUserIDAndTypeAndDateRange(userID uint, activityType string, startDate, endDate time.Time) ([]models.Activity, error)
 	GetActivitiesByUserIDAndType(userID uint, activityType string) ([]models.Activity, error)
+	CountUserActivities(userID uint) (int64, error)
 }
 
 type activityRepository struct {
@@ -94,4 +95,15 @@ func (r *activityRepository) GetActivitiesByUserIDAndType(userID uint, activityT
 		Order("activity_date DESC").
 		Find(&activities).Error
 	return activities, err
+}
+
+func (r *activityRepository) CountUserActivities(userID uint) (int64, error) {
+	var count int64
+	err := r.db.Model(&models.Activity{}).Where("user_id = ?", userID).Count(&count).Error
+	if err != nil {
+		log.Printf("Error counting activities for user %d: %v", userID, err)
+		return 0, err
+	}
+	log.Printf("User %d has %d activities", userID, count)
+	return count, nil
 }

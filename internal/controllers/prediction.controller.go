@@ -178,6 +178,17 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		return
 	}
 
+	// Update the last prediction time for the user
+	now := time.Now()
+	if err := pc.userRepo.UpdateLastPredictionTime(userID.(uint), &now); err != nil {
+		log.Printf("Error updating last prediction time for user ID %d: %v", userID.(uint), err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to update last prediction time",
+			"error":   err.Error(),
+		})
+		return
+	}
 	// Return comprehensive response
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
@@ -330,9 +341,9 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 
 // calculateBrinkmanIndex calculates Brinkman index from smoking activities
 func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, error) {
-	// Get smoking activities from last 8 weeks for current smokers
+	// Get smoking activities from last 14 days
 	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -56)
+	startDate := endDate.AddDate(0, 0, -14)
 
 	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
 	if err != nil {
@@ -349,22 +360,30 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, er
 		totalCigarettes += activity.Value
 	}
 
-	avgCigarettesPerDay := float64(totalCigarettes) / 56.0
+	avgCigarettesPerDay := float64(totalCigarettes) / 14.0 // Average over 14 days
 
-	// Estimate years of smoking - Harus ditambah logika untuk menghitung tahun merokok
-	// For now, assume if they're actively smoking, they've been smoking for some years
-	estimatedYears := 1.0
+	// Get estimated years of smoking from user profile
+	profile, err := pc.profileRepo.FindByUserID(userID)
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to get user profile: %v", err)
+	}
+	estimatedYears := 0
+	if profile.YearOfSmoking != nil {
+		estimatedYears = *profile.YearOfSmoking
+	} else {
+		return 0.0, fmt.Errorf("year of smoking is required but not found in profile")
+	}
 
 	// Brinkman Index = cigarettes per day × years of smoking
-	brinkmanIndex := avgCigarettesPerDay * estimatedYears
+	brinkmanIndex := avgCigarettesPerDay * float64(estimatedYears)
 
 	return math.Round(brinkmanIndex*10) / 10, nil
 }
 
-// calculatePhysicalActivityMinutes calculates average workout minutes per 8 weeks
+// calculatePhysicalActivityMinutes calculates average workout minutes per 2 weeks
 func (pc *PredictionController) calculatePhysicalActivityMinutes(userID uint) (int, error) {
 	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -56) // Last 8 weeks = 56 days
+	startDate := endDate.AddDate(0, 0, -14)
 
 	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
 	if err != nil {
@@ -376,7 +395,7 @@ func (pc *PredictionController) calculatePhysicalActivityMinutes(userID uint) (i
 		totalMinutes += activity.Value
 	}
 
-	// Return total minutes in the 8-week period
+	// Calculate average minutes per day over the 14 days
 	return totalMinutes, nil
 }
 
@@ -631,5 +650,57 @@ func (pc *PredictionController) DeletePrediction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Prediction deleted successfully",
+	})
+}
+
+func (pc *PredictionController) GetPredictionScoreByDate(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
+	}
+
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	startDate, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid start date format",
+			"error":   "Date must be in YYYY-MM-DD format",
+		})
+		return
+	}
+
+	endDate, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid end date format",
+			"error":   "Date must be in YYYY-MM-DD format",
+		})
+		return
+	}
+
+	endDate = endDate.Add(24 * time.Hour).Add(-time.Second)
+
+	scores, err := pc.repo.GetPredictionScoreByUserIDAndDateRange(userID.(uint), startDate, endDate)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to retrieve prediction score",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Prediction score retrieved successfully",
+		"data":    scores,
 	})
 }

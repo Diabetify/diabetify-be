@@ -2,6 +2,7 @@ package repository
 
 import (
 	"diabetify/internal/models"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -66,4 +67,8 @@ func (ur *UserRepository) IsUserVerified(email string) (bool, error) {
 		return false, err
 	}
 	return user.Verified, nil
+}
+
+func (ur *UserRepository) UpdateLastPredictionTime(userID uint, lastPredictionTime *time.Time) error {
+	return ur.db.Model(&models.User{}).Where("id = ?", userID).Update("last_prediction_at", lastPredictionTime).Error
 }

@@ -17,5 +17,6 @@ func RegisterActivityRoutes(router *gin.Engine, activityController *controllers.
 		activityRoutes.DELETE("/:id", activityController.DeleteActivity)
 		activityRoutes.GET("/me", activityController.GetCurrentUserActivities)
 		activityRoutes.GET("/me/date-range", activityController.GetActivitiesByDateRange)
+		activityRoutes.GET("/me/count", activityController.CountUserActivities)
 	}
 }

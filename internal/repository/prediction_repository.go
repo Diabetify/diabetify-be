@@ -13,6 +13,7 @@ type PredictionRepository interface {
 	GetPredictionsByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]models.Prediction, error)
 	GetPredictionByID(id uint) (*models.Prediction, error)
 	DeletePrediction(id uint) error
+	GetPredictionScoreByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]PredictionScore, error)
 }
 
 type predictionRepository struct {
@@ -52,4 +53,31 @@ func (r *predictionRepository) GetPredictionByID(id uint) (*models.Prediction, e
 
 func (r *predictionRepository) DeletePrediction(id uint) error {
 	return r.db.Delete(&models.Prediction{}, id).Error
+}
+
+// PredictionScore represents the risk score and creation date of a prediction.
+type PredictionScore struct {
+	RiskScore float64   `json:"risk_score"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (r *predictionRepository) GetPredictionScoreByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]PredictionScore, error) {
+	var predictions []models.Prediction
+	err := r.db.Model(&models.Prediction{}).
+		Select("risk_score, created_at").
+		Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
+		Find(&predictions).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var scores []PredictionScore
+	for _, prediction := range predictions {
+		scores = append(scores, PredictionScore{
+			RiskScore: prediction.RiskScore,
+			CreatedAt: prediction.CreatedAt,
+		})
+	}
+
+	return scores, nil
 }

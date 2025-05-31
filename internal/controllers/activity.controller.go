@@ -102,6 +102,19 @@ func (ac *ActivityController) GetCurrentUserActivities(c *gin.Context) {
 	}
 
 	activities, err := ac.repo.FindAllByUserID(userID.(uint))
+	// separate activity by type ["smoke", "workout"]
+	groupedActivities := make(map[string]interface{})
+
+	groupedActivities["smoke"] = []interface{}{}
+	groupedActivities["workout"] = []interface{}{}
+
+	for _, activity := range activities {
+		activityType := activity.ActivityType
+		if activityType == "smoke" || activityType == "workout" {
+			groupedActivities[activityType] = append(groupedActivities[activityType].([]interface{}), activity)
+		}
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -114,7 +127,7 @@ func (ac *ActivityController) GetCurrentUserActivities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Activities retrieved successfully",
-		"data":    activities,
+		"data":    groupedActivities,
 	})
 }
 
@@ -405,5 +418,44 @@ func (ac *ActivityController) GetActivitiesByDateRange(c *gin.Context) {
 		"status":  "success",
 		"message": "Activities retrieved successfully",
 		"data":    groupedActivities,
+	})
+}
+
+// CountUserActivities
+// @Summary Count user activities
+// @Description Count the number of activities for the authenticated user
+// @Tags activity
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Activity count retrieved successfully"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Failed to count activities"
+// @Router /activity/me/count [get]
+func (ac *ActivityController) CountUserActivities(c *gin.Context) {
+	// Get user ID from the JWT token
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized",
+			"error":   "User ID not found in token",
+		})
+		return
+	}
+
+	count, err := ac.repo.CountUserActivities(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to count activities",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Activity count retrieved successfully",
+		"data":    map[string]int64{"count": count},
 	})
 }
