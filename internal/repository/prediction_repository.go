@@ -30,7 +30,7 @@ func (r *predictionRepository) SavePrediction(prediction *models.Prediction) err
 
 func (r *predictionRepository) GetPredictionsByUserID(userID uint) ([]models.Prediction, error) {
 	var predictions []models.Prediction
-	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&predictions).Error
+	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&predictions).Order("created_at DESC").Error
 	return predictions, err
 }
 
@@ -66,7 +66,9 @@ func (r *predictionRepository) GetPredictionScoreByUserIDAndDateRange(userID uin
 	err := r.db.Model(&models.Prediction{}).
 		Select("risk_score, created_at").
 		Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
-		Find(&predictions).Error
+		Find(&predictions).
+		Order("created_at DESC").
+		Error
 	if err != nil {
 		return nil, err
 	}
