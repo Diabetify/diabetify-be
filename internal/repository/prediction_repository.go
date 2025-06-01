@@ -35,9 +35,17 @@ func (r *predictionRepository) GetPredictionsByUserID(userID uint, limit int) ([
 
 func (r *predictionRepository) GetPredictionsByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]models.Prediction, error) {
 	var predictions []models.Prediction
+
+	subQuery := r.db.Model(&models.Prediction{}).
+		Select("DATE(created_at) as date, MAX(created_at) as max_created").
+		Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
+		Group("DATE(created_at)")
+
 	err := r.db.Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
+		Where("(DATE(created_at), created_at) IN (?)", subQuery).
 		Order("created_at DESC").
 		Find(&predictions).Error
+
 	return predictions, err
 }
 
