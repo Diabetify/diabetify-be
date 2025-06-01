@@ -36,15 +36,17 @@ func (r *predictionRepository) GetPredictionsByUserID(userID uint, limit int) ([
 func (r *predictionRepository) GetPredictionsByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]models.Prediction, error) {
 	var predictions []models.Prediction
 
-	subQuery := r.db.Model(&models.Prediction{}).
-		Select("DATE(created_at) as date, MAX(created_at) as max_created").
-		Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
-		Group("DATE(created_at)")
-
-	err := r.db.Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
-		Where("(DATE(created_at), created_at) IN (?)", subQuery).
-		Order("created_at DESC").
-		Find(&predictions).Error
+	err := r.db.Raw(`
+		SELECT * 
+		FROM (
+			SELECT *,
+				   ROW_NUMBER() OVER (PARTITION BY DATE(created_at) ORDER BY created_at DESC) as rn
+			FROM predictions 
+			WHERE user_id = ? AND created_at BETWEEN ? AND ?
+		) ranked_predictions
+		WHERE rn = 1
+		ORDER BY created_at DESC
+	`, userID, startDate, endDate).Find(&predictions).Error
 
 	return predictions, err
 }
@@ -71,16 +73,17 @@ type PredictionScore struct {
 func (r *predictionRepository) GetPredictionScoreByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]PredictionScore, error) {
 	var scores []PredictionScore
 
-	err := r.db.Table("predictions").
-		Select("risk_score, created_at").
-		Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
-		Where("(DATE(created_at), created_at) IN (?)",
-			r.db.Table("predictions").
-				Select("DATE(created_at), MAX(created_at)").
-				Where("user_id = ? AND created_at BETWEEN ? AND ?", userID, startDate, endDate).
-				Group("DATE(created_at)")).
-		Order("created_at DESC").
-		Scan(&scores).Error
+	err := r.db.Raw(`
+		SELECT risk_score, created_at 
+		FROM (
+			SELECT risk_score, created_at,
+				   ROW_NUMBER() OVER (PARTITION BY DATE(created_at) ORDER BY created_at DESC) as rn
+			FROM predictions 
+			WHERE user_id = ? AND created_at BETWEEN ? AND ?
+		) ranked_predictions
+		WHERE rn = 1
+		ORDER BY created_at DESC
+	`, userID, startDate, endDate).Scan(&scores).Error
 
 	return scores, err
 }
