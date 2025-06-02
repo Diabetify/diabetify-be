@@ -4,6 +4,7 @@ import (
 	"context"
 	"diabetify/internal/ml"
 	"diabetify/internal/models"
+	"diabetify/internal/openai"
 	"diabetify/internal/repository"
 	"fmt"
 	"log"
@@ -718,5 +719,95 @@ func (pc *PredictionController) GetPredictionScoreByDate(c *gin.Context) {
 		"status":  "success",
 		"message": "Prediction score retrieved successfully",
 		"data":    scores,
+	})
+}
+
+// GetLatestPredictionExplanation godoc
+// @Summary Get latest prediction with LLM explanation for current user
+// @Description Get the most recent prediction with detailed LLM explanation for the authenticated user
+// @Tags prediction
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} models.Prediction "Latest prediction with explanation"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "No prediction found"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /prediction/me/latest [get]
+func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
+	}
+
+	// Get latest prediction
+	prediction, err := pc.repo.GetLatestPredictionByUserID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "No prediction found",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// If the prediction doesn't have an LLM explanation, generate one
+	// if prediction.LLMExplanation == "" {
+		openaiClient, err := openai.NewClient()
+		if err != nil {
+			log.Printf("Error creating OpenAI client: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to initialize OpenAI client",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		factors := map[string]struct {
+			Contribution float64
+			Impact       float64
+		}{
+			"Age":                     {Contribution: prediction.AgeContribution, Impact: prediction.AgeImpact},
+			"BMI":                     {Contribution: prediction.BMIContribution, Impact: prediction.BMIImpact},
+			"Brinkman Score":          {Contribution: prediction.BrinkmanScoreContribution, Impact: prediction.BrinkmanScoreImpact},
+			"Hypertension":            {Contribution: prediction.IsHypertensionContribution, Impact: prediction.IsHypertensionImpact},
+			"Macrosomic Baby":         {Contribution: prediction.IsMacrosomicBabyContribution, Impact: prediction.IsMacrosomicBabyImpact},
+			"Smoking Status":          {Contribution: prediction.SmokingStatusContribution, Impact: prediction.SmokingStatusImpact},
+			"Physical Activity Level": {Contribution: prediction.PhysicalActivityMinutesContribution, Impact: prediction.PhysicalActivityMinutesImpact},
+		}
+
+		llmExplanation, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
+		if err != nil {
+			log.Printf("Error generating LLM explanation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to generate LLM explanation",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		// Update prediction with LLM explanation
+		// prediction.LLMExplanation = llmExplanation
+		// if err := pc.repo.UpdatePrediction(prediction); err != nil {
+		// 	log.Printf("Error updating prediction with LLM explanation: %v", err)
+		// 	c.JSON(http.StatusInternalServerError, gin.H{
+		// 		"status":  "error",
+		// 		"message": "Failed to update prediction with LLM explanation",
+		// 		"error":   err.Error(),
+		// 	})
+		// 	return
+		// }
+	// }
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Latest prediction retrieved successfully",
+		"data": llmExplanation,
 	})
 }

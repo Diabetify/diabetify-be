@@ -14,6 +14,8 @@ type PredictionRepository interface {
 	GetPredictionByID(id uint) (*models.Prediction, error)
 	DeletePrediction(id uint) error
 	GetPredictionScoreByUserIDAndDateRange(userID uint, startDate, endDate time.Time) ([]PredictionScore, error)
+	GetLatestPredictionByUserID(userID uint) (*models.Prediction, error)
+	UpdatePrediction(prediction *models.Prediction) error
 }
 
 type predictionRepository struct {
@@ -87,3 +89,16 @@ func (r *predictionRepository) GetPredictionScoreByUserIDAndDateRange(userID uin
 
 	return scores, err
 }
+
+func (r *predictionRepository) GetLatestPredictionByUserID(userID uint) (*models.Prediction, error) {
+	var prediction models.Prediction
+	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").First(&prediction).Error
+	if err != nil {
+		return nil, err
+	}
+	return &prediction, nil
+}
+
+// func (r *predictionRepository) UpdatePrediction(prediction *models.Prediction) error {
+// 	return r.db.Save(prediction).Error
+// }

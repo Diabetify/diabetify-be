@@ -18,5 +18,6 @@ func RegisterPredictionRoutes(router *gin.Engine, predictionController *controll
 		predictionRoutes.GET("/me", predictionController.GetUserPredictions)
 		predictionRoutes.GET("/me/date-range", predictionController.GetPredictionsByDateRange)
 		predictionRoutes.GET("/me/score", predictionController.GetPredictionScoreByDate)
+		predictionRoutes.GET("/me/explanation", predictionController.GetLatestPredictionExplanation)
 	}
 }
