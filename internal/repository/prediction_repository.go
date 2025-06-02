@@ -99,6 +99,6 @@ func (r *predictionRepository) GetLatestPredictionByUserID(userID uint) (*models
 	return &prediction, nil
 }
 
-// func (r *predictionRepository) UpdatePrediction(prediction *models.Prediction) error {
-// 	return r.db.Save(prediction).Error
-// }
+func (r *predictionRepository) UpdatePrediction(prediction *models.Prediction) error {
+	return r.db.Save(prediction).Error
+}

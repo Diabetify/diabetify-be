@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -744,7 +745,6 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 		return
 	}
 
-	// Get latest prediction
 	prediction, err := pc.repo.GetLatestPredictionByUserID(userID.(uint))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -755,59 +755,139 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 		return
 	}
 
-	// If the prediction doesn't have an LLM explanation, generate one
-	// if prediction.LLMExplanation == "" {
-		openaiClient, err := openai.NewClient()
-		if err != nil {
-			log.Printf("Error creating OpenAI client: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "Failed to initialize OpenAI client",
-				"error":   err.Error(),
-			})
-			return
+	hasExplanations := prediction.AgeExplanation != "" &&
+		prediction.BMIExplanation != "" &&
+		prediction.BrinkmanScoreExplanation != "" &&
+		prediction.IsHypertensionExplanation != "" &&
+		prediction.IsMacrosomicBabyExplanation != "" &&
+		prediction.SmokingStatusExplanation != "" &&
+		prediction.PhysicalActivityMinutesExplanation != ""
+
+	if hasExplanations {
+		factorExplanations := map[string]string{
+			"age":                      prediction.AgeExplanation,
+			"bmi":                      prediction.BMIExplanation,
+			"brinkman_score":           prediction.BrinkmanScoreExplanation,
+			"is_hypertension":          prediction.IsHypertensionExplanation,
+			"is_macrosomic_baby":       prediction.IsMacrosomicBabyExplanation,
+			"smoking_status":           prediction.SmokingStatusExplanation,
+			"physical_activity_minute": prediction.PhysicalActivityMinutesExplanation,
 		}
 
-		factors := map[string]struct {
-			Contribution float64
-			Impact       float64
-		}{
-			"Age":                     {Contribution: prediction.AgeContribution, Impact: prediction.AgeImpact},
-			"BMI":                     {Contribution: prediction.BMIContribution, Impact: prediction.BMIImpact},
-			"Brinkman Score":          {Contribution: prediction.BrinkmanScoreContribution, Impact: prediction.BrinkmanScoreImpact},
-			"Hypertension":            {Contribution: prediction.IsHypertensionContribution, Impact: prediction.IsHypertensionImpact},
-			"Macrosomic Baby":         {Contribution: prediction.IsMacrosomicBabyContribution, Impact: prediction.IsMacrosomicBabyImpact},
-			"Smoking Status":          {Contribution: prediction.SmokingStatusContribution, Impact: prediction.SmokingStatusImpact},
-			"Physical Activity Level": {Contribution: prediction.PhysicalActivityMinutesContribution, Impact: prediction.PhysicalActivityMinutesImpact},
-		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "Latest prediction explanation retrieved successfully",
+			"data": gin.H{
+				"explanations": factorExplanations,
+			},
+		})
+		return
+	}
 
-		llmExplanation, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
-		if err != nil {
-			log.Printf("Error generating LLM explanation: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "Failed to generate LLM explanation",
-				"error":   err.Error(),
-			})
-			return
-		}
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		log.Printf("OPENAI_API_KEY environment variable is not set")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "OpenAI API key is not configured",
+		})
+		return
+	}
 
-		// Update prediction with LLM explanation
-		// prediction.LLMExplanation = llmExplanation
-		// if err := pc.repo.UpdatePrediction(prediction); err != nil {
-		// 	log.Printf("Error updating prediction with LLM explanation: %v", err)
-		// 	c.JSON(http.StatusInternalServerError, gin.H{
-		// 		"status":  "error",
-		// 		"message": "Failed to update prediction with LLM explanation",
-		// 		"error":   err.Error(),
-		// 	})
-		// 	return
-		// }
-	// }
+	openaiClient, err := openai.NewClient()
+	if err != nil {
+		log.Printf("Error creating OpenAI client: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to initialize OpenAI client",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	factors := map[string]struct {
+		Value        string
+		Contribution float64
+		Impact       float64
+	}{
+		"age": {
+			Value:        fmt.Sprintf("%d years", prediction.Age),
+			Contribution: prediction.AgeContribution,
+			Impact:       prediction.AgeImpact,
+		},
+		"bmi": {
+			Value:        fmt.Sprintf("%.1f", prediction.BMI),
+			Contribution: prediction.BMIContribution,
+			Impact:       prediction.BMIImpact,
+		},
+		"brinkman_score": {
+			Value:        fmt.Sprintf("%.1f", prediction.BrinkmanScore),
+			Contribution: prediction.BrinkmanScoreContribution,
+			Impact:       prediction.BrinkmanScoreImpact,
+		},
+		"is_hypertension": {
+			Value:        fmt.Sprintf("%v", prediction.IsHypertension),
+			Contribution: prediction.IsHypertensionContribution,
+			Impact:       prediction.IsHypertensionImpact,
+		},
+		"is_macrosomic_baby": {
+			Value:        fmt.Sprintf("%v", prediction.IsMacrosomicBaby),
+			Contribution: prediction.IsMacrosomicBabyContribution,
+			Impact:       prediction.IsMacrosomicBabyImpact,
+		},
+		"smoking_status": {
+			Value:        prediction.SmokingStatus,
+			Contribution: prediction.SmokingStatusContribution,
+			Impact:       prediction.SmokingStatusImpact,
+		},
+		"physical_activity_minute": {
+			Value:        fmt.Sprintf("%d minutes", prediction.PhysicalActivityMinutes),
+			Contribution: prediction.PhysicalActivityMinutesContribution,
+			Impact:       prediction.PhysicalActivityMinutesImpact,
+		},
+	}
+
+	explanations, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
+	if err != nil {
+		log.Printf("Error generating LLM explanation: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to generate LLM explanation",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if len(explanations) == 0 {
+		log.Printf("No explanations returned from OpenAI")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "No explanations were generated",
+		})
+		return
+	}
+
+	prediction.AgeExplanation = explanations["age"].Explanation
+	prediction.BMIExplanation = explanations["bmi"].Explanation
+	prediction.BrinkmanScoreExplanation = explanations["brinkman_score"].Explanation
+	prediction.IsHypertensionExplanation = explanations["is_hypertension"].Explanation
+	prediction.IsMacrosomicBabyExplanation = explanations["is_macrosomic_baby"].Explanation
+	prediction.SmokingStatusExplanation = explanations["smoking_status"].Explanation
+	prediction.PhysicalActivityMinutesExplanation = explanations["physical_activity_minute"].Explanation
+
+	if err := pc.repo.UpdatePrediction(prediction); err != nil {
+		log.Printf("Error saving explanations to database: %v", err)
+	}
+
+	factorExplanations := make(map[string]string)
+	for factor, exp := range explanations {
+		factorExplanations[factor] = exp.Explanation
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"message": "Latest prediction retrieved successfully",
-		"data": llmExplanation,
+		"message": "Latest prediction explanation generated successfully",
+		"data": gin.H{
+			"explanations": factorExplanations,
+		},
 	})
 }

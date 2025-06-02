@@ -17,24 +17,31 @@ type Prediction struct {
 	Age                                 int            `json:"age" example:"30"`
 	AgeContribution                     float64        `json:"age_contribution" example:"0.1"`
 	AgeImpact                           float64        `json:"age_impact" example:"0.2"`
+	AgeExplanation                      string         `gorm:"type:text" json:"age_explanation"`
 	BMI                                 float64        `json:"bmi" example:"22.5"`
 	BMIContribution                     float64        `json:"bmi_contribution" example:"0.15"`
 	BMIImpact                           float64        `json:"bmi_impact" example:"0.25"`
+	BMIExplanation                      string         `gorm:"type:text" json:"bmi_explanation"`
 	BrinkmanScore                       float64        `json:"brinkman_score" example:"0.5"`
 	BrinkmanScoreContribution           float64        `json:"brinkman_score_contribution" example:"0.2"`
 	BrinkmanScoreImpact                 float64        `json:"brinkman_score_impact" example:"0.3"`
+	BrinkmanScoreExplanation            string         `gorm:"type:text" json:"brinkman_score_explanation"`
 	IsHypertension                      bool           `json:"is_hypertension" example:"true"`
 	IsHypertensionContribution          float64        `json:"is_hypertension_contribution" example:"0.1"`
 	IsHypertensionImpact                float64        `json:"is_hypertension_impact" example:"0.2"`
+	IsHypertensionExplanation           string         `gorm:"type:text" json:"is_hypertension_explanation"`
 	IsMacrosomicBaby                    bool           `json:"is_macrosomic_baby" example:"false"`
 	IsMacrosomicBabyContribution        float64        `json:"is_macrosomic_baby_contribution" example:"0.05"`
 	IsMacrosomicBabyImpact              float64        `json:"is_macrosomic_baby_impact" example:"0.1"`
+	IsMacrosomicBabyExplanation         string         `gorm:"type:text" json:"is_macrosomic_baby_explanation"`
 	SmokingStatus                       string         `json:"smoking_status" example:"non_smoker"`
 	SmokingStatusContribution           float64        `json:"smoking_status_contribution" example:"0.1"`
 	SmokingStatusImpact                 float64        `json:"smoking_status_impact" example:"0.2"`
+	SmokingStatusExplanation            string         `gorm:"type:text" json:"smoking_status_explanation"`
 	PhysicalActivityMinutes             int            `json:"physical_activity_minutes" example:"150"`
 	PhysicalActivityMinutesContribution float64        `json:"physical_activity_minutes_contribution" example:"0.1"`
 	PhysicalActivityMinutesImpact       float64        `json:"physical_activity_minutes_impact" example:"0.2"`
+	PhysicalActivityMinutesExplanation  string         `gorm:"type:text" json:"physical_activity_minutes_explanation"`
 }
 
 type PredictionRequest struct {
