@@ -56,8 +56,8 @@ func ConnectDatabase() {
 	}
 
 	// Set connection pools
-	sqlDB.SetMaxIdleConns(25)
-	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetMaxIdleConns(100)
+	sqlDB.SetMaxOpenConns(397)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(2 * time.Minute)
 
