@@ -372,8 +372,6 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, er
 	estimatedYears := 0
 	if profile.YearOfSmoking != nil {
 		estimatedYears = *profile.YearOfSmoking
-	} else {
-		return 0.0, fmt.Errorf("year of smoking is required but not found in profile")
 	}
 
 	// Brinkman Index = cigarettes per day × years of smoking
