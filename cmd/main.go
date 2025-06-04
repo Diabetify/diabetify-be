@@ -37,7 +37,7 @@ func main() {
 	if err := database.MigrateDatabase(); err != nil {
 		log.Fatalf("Failed to run database migrations: %v", err)
 	}
-
+	database.MonitorDBConnections()
 	// Initialize repositories
 	forgotPasswordRepo := repository.NewResetPasswordRepository(db)
 	userRepo := repository.NewUserRepository(db)

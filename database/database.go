@@ -56,10 +56,10 @@ func ConnectDatabase() {
 	}
 
 	// Set connection pools
-	sqlDB.SetMaxIdleConns(100)
-	sqlDB.SetMaxOpenConns(397)
-	sqlDB.SetConnMaxLifetime(5 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(2 * time.Minute)
+	sqlDB.SetMaxOpenConns(200)
+	sqlDB.SetMaxIdleConns(50)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetConnMaxIdleTime(15 * time.Minute)
 
 	if err := sqlDB.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
@@ -67,10 +67,23 @@ func ConnectDatabase() {
 
 	log.Println("Connected to database successfully")
 	log.Printf("Database connection pool configured:")
-	log.Printf("  - Max open connections: %d", 100)
-	log.Printf("  - Max idle connections: %d", 25)
+	log.Printf("  - Max open connections: %d", 397)
+	log.Printf("  - Max idle connections: %d", 100)
 	log.Printf("  - Connection max lifetime: %v", 5*time.Minute)
 	log.Printf("  - Connection max idle time: %v", 2*time.Minute)
 
 	DB = db
+}
+func MonitorDBConnections() {
+	ticker := time.NewTicker(10 * time.Second)
+	go func() {
+		for range ticker.C {
+			sqlDB, _ := DB.DB()
+			stats := sqlDB.Stats()
+			if stats.InUse > 150 { // Alert if using too many connections
+				log.Printf("⚠️  DB Connection Pool: InUse=%d, Idle=%d, Open=%d",
+					stats.InUse, stats.Idle, stats.OpenConnections)
+			}
+		}
+	}()
 }
