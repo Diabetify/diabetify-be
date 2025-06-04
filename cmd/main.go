@@ -87,7 +87,7 @@ func main() {
 		activityRepo,   // Activity repository for calculating Brinkman index and physical activity
 		mlClient,       // gRPC ML client
 	)
-
+	gin.SetMode(gin.ReleaseMode)
 	// Setup Gin router
 	router := gin.Default()
 
