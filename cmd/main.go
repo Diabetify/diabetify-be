@@ -8,6 +8,7 @@ import (
 	"diabetify/internal/repository"
 	"diabetify/routes"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -120,10 +121,18 @@ func main() {
 	log.Printf("🚀 Server starting on port %s", port)
 	log.Printf("📋 API Documentation available at http://localhost:%s/swagger/index.html", port)
 	log.Printf("🔗 ML Health check: http://localhost:%s/prediction/predict/health", port)
-	log.Printf("🎯 Auto-Prediction endpoint: POST http://localhost:%s/prediction/", port)
-	log.Printf("📊 Get predictions: GET http://localhost:%s/prediction/me", port)
 
-	if err := router.Run(":" + port); err != nil {
+	server := &http.Server{
+		Addr:           ":" + port,
+		Handler:        router,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+
+	log.Printf("Server starting on port %s", port)
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }
