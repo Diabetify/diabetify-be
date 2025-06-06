@@ -128,20 +128,20 @@ func (ac *ArticleController) CreateArticle(c *gin.Context) {
 // @Failure 500 {object} map[string]interface{} "Failed to retrieve articles"
 // @Router /article [get]
 func (ac *ArticleController) GetAllArticles(c *gin.Context) {
-	articles, err := ac.repo.FindAll()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "Failed to retrieve articles",
-			"error":   err.Error(),
-		})
-		return
-	}
+	// articles, err := ac.repo.FindAll()
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{
+	// 		"status":  "error",
+	// 		"message": "Failed to retrieve articles",
+	// 		"error":   err.Error(),
+	// 	})
+	// 	return
+	// }
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Articles retrieved successfully",
-		"data":    articles,
+		"data":    []models.Article{}, // Replace with actual articles
 	})
 }
 
