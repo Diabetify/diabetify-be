@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"time"
 
 	"diabetify/docs"
@@ -111,7 +112,14 @@ func main() {
 	routes.RegisterArticleRoutes(router, articleController)
 	routes.RegisterUserProfileRoutes(router, profileController)
 	routes.RegisterPredictionRoutes(router, predictionController)
-
+	router.GET("/debug/stats", func(c *gin.Context) {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		c.JSON(200, gin.H{
+			"goroutines": runtime.NumGoroutine(),
+			"memory_mb":  m.Alloc / 1024 / 1024,
+		})
+	})
 	// Start the server
 	port := os.Getenv("PORT")
 	if port == "" {
