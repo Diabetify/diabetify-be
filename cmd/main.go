@@ -138,6 +138,7 @@ func main() {
 		IdleTimeout:    60 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
+	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	log.Printf("Server starting on port %s", port)
 	if err := server.ListenAndServe(); err != nil {
