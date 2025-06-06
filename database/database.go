@@ -56,8 +56,8 @@ func ConnectDatabase() {
 	}
 
 	// Set connection pools
-	sqlDB.SetMaxOpenConns(200)
-	sqlDB.SetMaxIdleConns(50)
+	sqlDB.SetMaxOpenConns(500)
+	sqlDB.SetMaxIdleConns(100)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 	sqlDB.SetConnMaxIdleTime(15 * time.Minute)
 
@@ -67,7 +67,7 @@ func ConnectDatabase() {
 
 	log.Println("Connected to database successfully")
 	log.Printf("Database connection pool configured:")
-	log.Printf("  - Max open connections: %d", 397)
+	log.Printf("  - Max open connections: %d", 500)
 	log.Printf("  - Max idle connections: %d", 100)
 	log.Printf("  - Connection max lifetime: %v", 5*time.Minute)
 	log.Printf("  - Connection max idle time: %v", 2*time.Minute)
