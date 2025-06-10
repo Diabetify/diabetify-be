@@ -56,10 +56,10 @@ func ConnectDatabase() {
 	}
 
 	// Set connection pools
-	sqlDB.SetMaxOpenConns(500)
-	sqlDB.SetMaxIdleConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
-	sqlDB.SetConnMaxIdleTime(15 * time.Minute)
+	sqlDB.SetMaxOpenConns(1000)
+	sqlDB.SetMaxIdleConns(200)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(1 * time.Minute)
 
 	if err := sqlDB.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
