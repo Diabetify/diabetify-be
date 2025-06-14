@@ -15,3 +15,19 @@ type ResetPassword struct {
 	Code      string         `json:"code" example:"123456"`
 	ExpiresAt time.Time      `json:"expires_at" example:"2023-01-01T00:00:00Z"`
 }
+
+func (rp *ResetPassword) GetShardKey() int {
+	hash := 0
+	for _, char := range rp.Email {
+		hash += int(char)
+	}
+	// Map to shard ranges (1-5000 for shard1, 5001-10000 for shard2)
+	if hash%2 == 0 {
+		return 2500 // Will go to shard1
+	}
+	return 7500 // Will go to shard2
+}
+
+func (rp *ResetPassword) TableName() string {
+	return "reset_passwords"
+}

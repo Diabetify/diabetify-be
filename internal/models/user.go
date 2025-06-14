@@ -6,7 +6,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// User represents a system user
 // @description User model for the system
 type User struct {
 	ID               uint           `gorm:"primaryKey" json:"id" example:"1"`
@@ -20,4 +19,12 @@ type User struct {
 	DOB              *string        `gorm:"type:DATE;" json:"dob" example:"2000-01-30"`
 	Verified         bool           `gorm:"default:false" json:"verified" example:"false"`
 	LastPredictionAt *time.Time     `json:"last_prediction_at,omitempty" example:"2023-01-01T00:00:00Z"`
+}
+
+func (u *User) GetShardKey() int {
+	return int(u.ID)
+}
+
+func (u *User) TableName() string {
+	return "users"
 }

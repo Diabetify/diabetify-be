@@ -44,6 +44,14 @@ type Prediction struct {
 	PhysicalActivityMinutesExplanation  string         `gorm:"type:text" json:"physical_activity_minutes_explanation"`
 }
 
+func (p *Prediction) GetShardKey() int {
+	return int(p.UserID)
+}
+
+func (p *Prediction) TableName() string {
+	return "predictions"
+}
+
 type PredictionRequest struct {
 	Features []float64 `json:"features" binding:"required"`
 }
@@ -67,6 +75,7 @@ type UpdateModelRequest struct {
 	YVal   []float64   `json:"y_val" binding:"required"`
 	Epochs int         `json:"epochs" binding:"required,min=1"`
 }
+
 type UpdateModelResponse struct {
 	Status      string    `json:"status"`
 	AUCBefore   float64   `json:"auc_before"`

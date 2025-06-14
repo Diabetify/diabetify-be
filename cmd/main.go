@@ -32,26 +32,28 @@ func main() {
 	docs.SwaggerInfo.Version = "1.0"
 	docs.SwaggerInfo.Schemes = []string{"http", "https"}
 
-	// Connect to the database
-	database.ConnectDatabase()
-	db := database.DB
-	if err := database.MigrateDatabase(); err != nil {
+	// Connect to the sharded databases
+	database.ConnectShardedDatabase()
+
+	if err := database.MigrateAllShards(); err != nil {
 		log.Fatalf("Failed to run database migrations: %v", err)
 	}
-	database.MonitorDBConnections()
-	// Initialize repositories
-	forgotPasswordRepo := repository.NewResetPasswordRepository(db)
-	userRepo := repository.NewUserRepository(db)
-	verificationRepo := repository.NewVerificationRepository(db)
-	activityRepo := repository.NewActivityRepository(db)
-	articleRepo := repository.NewArticleRepository(db)
-	profileRepo := repository.NewUserProfileRepository(db)
-	predictionRepo := repository.NewPredictionRepository(db)
+
+	database.MonitorShardedDBConnections()
+
+	// Initialize repositories with sharding
+	forgotPasswordRepo := repository.NewShardedResetPasswordRepository()
+	userRepo := repository.NewShardedUserRepository()
+	verificationRepo := repository.NewShardedVerificationRepository()
+	activityRepo := repository.NewShardedActivityRepository()
+	articleRepo := repository.NewArticleRepository(database.DB) // Article might not need sharding if not user-specific
+	profileRepo := repository.NewShardedUserProfileRepository()
+	predictionRepo := repository.NewShardedPredictionRepository()
 
 	// Initialize ML gRPC client
 	mlServiceAddress := os.Getenv("ML_SERVICE_ADDRESS")
 	if mlServiceAddress == "" {
-		mlServiceAddress = "localhost:50051" // Default gRPC address
+		mlServiceAddress = "localhost:50051"
 	}
 
 	log.Printf("Connecting to ML service via gRPC at %s...", mlServiceAddress)
@@ -88,6 +90,7 @@ func main() {
 		activityRepo,   // Activity repository for calculating Brinkman index and physical activity
 		mlClient,       // gRPC ML client
 	)
+
 	gin.SetMode(gin.ReleaseMode)
 	// Setup Gin router
 	router := gin.Default()
@@ -100,6 +103,8 @@ func main() {
 			"status":     "healthy",
 			"ml_service": "gRPC",
 			"prediction": "Auto-prediction from user profile",
+			"database":   "Sharded PostgreSQL",
+			"shards":     []string{"shard1 (users 1-5000)", "shard2 (users 5001-10000)"},
 		})
 	})
 
@@ -112,6 +117,8 @@ func main() {
 	routes.RegisterArticleRoutes(router, articleController)
 	routes.RegisterUserProfileRoutes(router, profileController)
 	routes.RegisterPredictionRoutes(router, predictionController)
+
+	// Debug endpoints
 	router.GET("/debug/stats", func(c *gin.Context) {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
@@ -120,6 +127,16 @@ func main() {
 			"memory_mb":  m.Alloc / 1024 / 1024,
 		})
 	})
+
+	// Shard health check endpoint
+	router.GET("/debug/shards", func(c *gin.Context) {
+		shardsHealth := database.CheckShardsHealth()
+		c.JSON(200, gin.H{
+			"shards_health": shardsHealth,
+			"total_shards":  len(shardsHealth),
+		})
+	})
+
 	// Start the server
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -129,6 +146,7 @@ func main() {
 	log.Printf("🚀 Server starting on port %s", port)
 	log.Printf("📋 API Documentation available at http://localhost:%s/swagger/index.html", port)
 	log.Printf("🔗 ML Health check: http://localhost:%s/prediction/predict/health", port)
+	log.Printf("🗄️  Database Shards Health: http://localhost:%s/debug/shards", port)
 
 	server := &http.Server{
 		Addr:           ":" + port,

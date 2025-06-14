@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"diabetify/database"
 	"diabetify/internal/models"
+	"fmt"
 	"log"
 	"time"
 
@@ -21,24 +23,95 @@ type ActivityRepository interface {
 }
 
 type activityRepository struct {
-	db *gorm.DB
+	db        *gorm.DB // Keep for backward compatibility
+	useShards bool     // Flag to enable/disable sharding
 }
 
 func NewActivityRepository(db *gorm.DB) ActivityRepository {
-	return &activityRepository{db}
+	return &activityRepository{
+		db:        db,
+		useShards: db == nil, // If no db provided, use sharding
+	}
+}
+
+// NewShardedActivityRepository creates an activity repository that uses sharding
+func NewShardedActivityRepository() ActivityRepository {
+	return &activityRepository{
+		db:        nil,
+		useShards: true,
+	}
 }
 
 func (r *activityRepository) Create(activity *models.Activity) error {
+	if r.useShards {
+		return database.Manager.ExecuteOnUserShard(int(activity.UserID), func(db *gorm.DB) error {
+			return db.Create(activity).Error
+		})
+	}
+
 	return r.db.Create(activity).Error
 }
 
 func (r *activityRepository) FindAllByUserID(userID uint, limit int) ([]models.Activity, error) {
+	if r.useShards {
+		var activities []models.Activity
+		err := database.Manager.ExecuteOnUserShard(int(userID), func(db *gorm.DB) error {
+			return db.Raw(`
+				SELECT *
+				FROM activities 
+				WHERE user_id = ? 
+				ORDER BY activity_date DESC 
+				LIMIT ?
+			`, userID, limit).Scan(&activities).Error
+		})
+
+		if err != nil {
+			log.Printf("Error querying activities for user %d: %v", userID, err)
+			return nil, err
+		}
+		return activities, err
+	}
+
 	var activities []models.Activity
-	err := r.db.Where("user_id = ?", userID).Limit(limit).Order("activity_date DESC").Find(&activities).Error
+	err := r.db.Raw(`
+        SELECT *
+        FROM activities 
+        WHERE user_id = ? 
+        ORDER BY activity_date DESC 
+        LIMIT ?
+    `, userID, limit).Scan(&activities).Error
+
+	if err != nil {
+		log.Printf("Error querying activities for user %d: %v", userID, err)
+		return nil, err
+	}
 	return activities, err
 }
 
 func (r *activityRepository) FindByID(id uint) (*models.Activity, error) {
+	if r.useShards {
+		// Since we don't know the user_id from just the activity ID, we need to search all shards
+		var foundActivity *models.Activity
+
+		shards := database.Manager.GetAllShards()
+		for shardName, db := range shards {
+			var activity models.Activity
+			err := db.First(&activity, id).Error
+			if err == nil {
+				foundActivity = &activity
+				break
+			} else if err != gorm.ErrRecordNotFound {
+				return nil, fmt.Errorf("error searching shard %s: %v", shardName, err)
+			}
+		}
+
+		if foundActivity == nil {
+			return nil, gorm.ErrRecordNotFound
+		}
+
+		return foundActivity, nil
+	}
+
 	var activity models.Activity
 	err := r.db.First(&activity, id).Error
 	if err != nil {
@@ -48,49 +121,91 @@ func (r *activityRepository) FindByID(id uint) (*models.Activity, error) {
 }
 
 func (r *activityRepository) Update(activity *models.Activity) error {
+	if r.useShards {
+		return database.Manager.ExecuteOnUserShard(int(activity.UserID), func(db *gorm.DB) error {
+			return db.Save(activity).Error
+		})
+	}
+
 	return r.db.Save(activity).Error
 }
 
 func (r *activityRepository) Delete(id uint) error {
+	if r.useShards {
+		// Since we don't know the user_id, we need to find it first
+		activity, err := r.FindByID(id)
+		if err != nil {
+			return err
+		}
+
+		return database.Manager.ExecuteOnUserShard(int(activity.UserID), func(db *gorm.DB) error {
+			return db.Delete(&models.Activity{}, id).Error
+		})
+	}
+
 	return r.db.Delete(&models.Activity{}, id).Error
 }
 
 func (r *activityRepository) FindByUserIDAndActivityDateRange(userID uint, startDate, endDate time.Time) ([]models.Activity, error) {
+	if r.useShards {
+		var activities []models.Activity
+		err := database.Manager.ExecuteOnUserShard(int(userID), func(db *gorm.DB) error {
+			return db.Where("user_id = ? AND activity_date BETWEEN ? AND ?", userID, startDate, endDate).
+				Order("activity_date DESC").
+				Find(&activities).Error
+		})
+
+		if err != nil {
+			log.Printf("Error querying activities: %v", err)
+		}
+
+		return activities, err
+	}
+
 	var activities []models.Activity
-
-	// Debug the query
-	log.Printf("Query: SELECT * FROM activities WHERE user_id = %d AND activity_date BETWEEN '%v' AND '%v'",
-		userID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
-
 	err := r.db.Where("user_id = ? AND activity_date BETWEEN ? AND ?", userID, startDate, endDate).
 		Order("activity_date DESC").
 		Find(&activities).Error
 
 	if err != nil {
 		log.Printf("Error querying activities: %v", err)
-	} else {
-		log.Printf("Found %d activities", len(activities))
-		for i, a := range activities {
-			log.Printf("Activity %d: ID=%d, Type=%s, Date=%v", i+1, a.ID, a.ActivityType, a.ActivityDate)
-		}
 	}
 
 	return activities, err
 }
-func (r *activityRepository) GetActivitiesByUserIDAndTypeAndDateRange(userID uint, activityType string, startDate, endDate time.Time) ([]models.Activity, error) {
-	var activities []models.Activity
 
+func (r *activityRepository) GetActivitiesByUserIDAndTypeAndDateRange(userID uint, activityType string, startDate, endDate time.Time) ([]models.Activity, error) {
+	if r.useShards {
+		var activities []models.Activity
+		err := database.Manager.ExecuteOnUserShard(int(userID), func(db *gorm.DB) error {
+			return db.Where("user_id = ? AND activity_type = ? AND activity_date BETWEEN ? AND ?",
+				userID, activityType, startDate, endDate).
+				Order("activity_date DESC").
+				Find(&activities).Error
+		})
+		return activities, err
+	}
+
+	var activities []models.Activity
 	err := r.db.Where("user_id = ? AND activity_type = ? AND activity_date BETWEEN ? AND ?",
 		userID, activityType, startDate, endDate).
 		Order("activity_date DESC").
 		Find(&activities).Error
-
 	return activities, err
 }
 
 func (r *activityRepository) GetActivitiesByUserIDAndType(userID uint, activityType string) ([]models.Activity, error) {
-	var activities []models.Activity
+	if r.useShards {
+		var activities []models.Activity
+		err := database.Manager.ExecuteOnUserShard(int(userID), func(db *gorm.DB) error {
+			return db.Where("user_id = ? AND activity_type = ?", userID, activityType).
+				Order("activity_date DESC").
+				Find(&activities).Error
+		})
+		return activities, err
+	}
 
+	var activities []models.Activity
 	err := r.db.Where("user_id = ? AND activity_type = ?", userID, activityType).
 		Order("activity_date DESC").
 		Find(&activities).Error
@@ -98,12 +213,30 @@ func (r *activityRepository) GetActivitiesByUserIDAndType(userID uint, activityT
 }
 
 func (r *activityRepository) CountUserActivities(userID uint) (int64, error) {
+	if r.useShards {
+		var count int64
+		err := database.Manager.ExecuteOnUserShard(int(userID), func(db *gorm.DB) error {
+			return db.Raw(`
+				SELECT COUNT(*) FROM activities
+				WHERE user_id = $1`,
+				userID).Scan(&count).Error
+		})
+
+		if err != nil {
+			log.Printf("Error counting activities for user %d: %v", userID, err)
+			return 0, err
+		}
+		return count, nil
+	}
+
 	var count int64
-	err := r.db.Model(&models.Activity{}).Where("user_id = ?", userID).Count(&count).Error
+	err := r.db.Raw(`
+		SELECT COUNT(*) FROM activities
+		WHERE user_id = $1`,
+		userID).Scan(&count).Error
 	if err != nil {
 		log.Printf("Error counting activities for user %d: %v", userID, err)
 		return 0, err
 	}
-	log.Printf("User %d has %d activities", userID, count)
 	return count, nil
 }

@@ -3,48 +3,43 @@ package utils
 import (
 	"fmt"
 	"log"
-
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
+
+// ==================== ORIGINAL FUNCTIONS (Single Database) ====================
 
 // CheckForDuplicateEmails checks if any of the test emails already exist in the database
 func CheckForDuplicateEmails(startIndex, endIndex int) error {
-	// Use environment variables for database connection
-	dbHost := getEnv("DB_HOST", "diabetify-db")
-	dbPort := getEnv("DB_PORT", "5439")
-	dbUser := getEnv("DB_USER", "postgres")
-	dbPassword := getEnv("DB_PASSWORD", "postgres")
-	dbName := getEnv("DB_NAME", "diabetify")
-	dbSSLMode := getEnv("DB_SSLMODE", "disable")
-	dbTimeZone := getEnv("DB_TIMEZONE", "Asia/Jakarta")
-
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
-		dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode, dbTimeZone)
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := connectToSingleDatabase()
 	if err != nil {
-		return fmt.Errorf("failed to connect to database: %v", err)
+		return err
 	}
 
 	log.Println("Connected to database successfully")
 	log.Printf("Checking for duplicate emails in range %d-%d...", startIndex, endIndex)
 
-	// Check for duplicate emails
-	for i := startIndex; i <= endIndex; i++ {
-		email := fmt.Sprintf("testuser%d@example.com", i)
+	// Check for duplicate emails using a more efficient query
+	var duplicateEmails []string
+	err = db.Raw(`
+		SELECT email 
+		FROM users 
+		WHERE email LIKE 'testuser%@example.com'
+		  AND email BETWEEN ? AND ?
+		GROUP BY email 
+		HAVING COUNT(*) > 1
+		ORDER BY email
+	`, fmt.Sprintf("testuser%d@example.com", startIndex), fmt.Sprintf("testuser%d@example.com", endIndex)).Scan(&duplicateEmails).Error
 
-		var count int64
-		if err := db.Model(&struct{ Email string }{}).
-			Table("users").
-			Where("email = ?", email).
-			Count(&count).Error; err != nil {
-			return fmt.Errorf("failed to check for duplicate email %s: %v", email, err)
-		}
+	if err != nil {
+		return fmt.Errorf("failed to check for duplicate emails: %v", err)
+	}
 
-		if count > 0 {
-			log.Printf("Email %s already exists in the database", email)
+	if len(duplicateEmails) > 0 {
+		log.Printf("Found %d duplicate emails:", len(duplicateEmails))
+		for _, email := range duplicateEmails {
+			log.Printf("  - %s", email)
 		}
+	} else {
+		log.Println("No duplicate emails found")
 	}
 
 	log.Println("Email duplicate check completed")
@@ -53,21 +48,9 @@ func CheckForDuplicateEmails(startIndex, endIndex int) error {
 
 // DeleteTestUsers deletes test users in the specified range
 func DeleteTestUsers(startIndex, endIndex int) error {
-	// Use environment variables for database connection
-	dbHost := getEnv("DB_HOST", "diabetify-db")
-	dbPort := getEnv("DB_PORT", "5439")
-	dbUser := getEnv("DB_USER", "postgres")
-	dbPassword := getEnv("DB_PASSWORD", "postgres")
-	dbName := getEnv("DB_NAME", "diabetify")
-	dbSSLMode := getEnv("DB_SSLMODE", "disable")
-	dbTimeZone := getEnv("DB_TIMEZONE", "Asia/Jakarta")
-
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
-		dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode, dbTimeZone)
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := connectToSingleDatabase()
 	if err != nil {
-		return fmt.Errorf("failed to connect to database: %v", err)
+		return err
 	}
 
 	log.Println("Connected to database successfully")

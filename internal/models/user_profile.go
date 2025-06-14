@@ -20,3 +20,11 @@ type UserProfile struct {
 	YearOfSmoking  *int           `gorm:"column:year_of_smoking" json:"year_of_smoking" example:"5"`
 	MacrosomicBaby *bool          `gorm:"column:macrosomic_baby" json:"macrosomic_baby" example:"false"`
 }
+
+func (up *UserProfile) GetShardKey() int {
+	return int(up.UserID)
+}
+
+func (up *UserProfile) TableName() string {
+	return "user_profiles"
+}
