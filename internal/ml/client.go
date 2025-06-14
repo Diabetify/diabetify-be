@@ -20,7 +20,6 @@ type grpcMLClient struct {
 
 type MLClient interface {
 	Predict(ctx context.Context, features []float64) (*models.PredictionResponse, error)
-	UpdateModel(ctx context.Context, req *models.UpdateModelRequest) (*models.UpdateModelResponse, error)
 	HealthCheck(ctx context.Context) error
 	Close() error
 }
@@ -85,53 +84,6 @@ func (c *grpcMLClient) Predict(ctx context.Context, features []float64) (*models
 	return &models.PredictionResponse{
 		Prediction:  resp.Prediction,
 		Explanation: explanationItems,
-		ElapsedTime: resp.ElapsedTime,
-		Timestamp:   timestamp,
-	}, nil
-}
-
-// UpdateModel sends model update request via gRPC
-func (c *grpcMLClient) UpdateModel(ctx context.Context, req *models.UpdateModelRequest) (*models.UpdateModelResponse, error) {
-	// Convert to gRPC format
-	xNew := make([]*pb.FeatureVector, len(req.XNew))
-	for i, features := range req.XNew {
-		xNew[i] = &pb.FeatureVector{Values: features}
-	}
-
-	xVal := make([]*pb.FeatureVector, len(req.XVal))
-	for i, features := range req.XVal {
-		xVal[i] = &pb.FeatureVector{Values: features}
-	}
-
-	grpcReq := &pb.UpdateModelRequest{
-		XNew:   xNew,
-		YNew:   req.YNew,
-		XVal:   xVal,
-		YVal:   req.YVal,
-		Epochs: int32(req.Epochs),
-	}
-
-	// Make gRPC call with longer timeout for model updates
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	resp, err := c.client.UpdateModel(ctx, grpcReq)
-	if err != nil {
-		return nil, fmt.Errorf("gRPC model update call failed: %w", err)
-	}
-
-	// Parse timestamp
-	timestamp, err := time.Parse(time.RFC3339, resp.Timestamp)
-	if err != nil {
-		timestamp = time.Now() // Fallback
-	}
-
-	return &models.UpdateModelResponse{
-		Status:      resp.Status,
-		AUCBefore:   resp.AucBefore,
-		AUCAfter:    resp.AucAfter,
-		PRAUCBefore: resp.PrAucBefore,
-		PRAUCAfter:  resp.PrAucAfter,
 		ElapsedTime: resp.ElapsedTime,
 		Timestamp:   timestamp,
 	}, nil
