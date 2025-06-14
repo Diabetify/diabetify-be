@@ -7,41 +7,49 @@ import (
 )
 
 type Prediction struct {
-	ID                                  uint           `gorm:"primaryKey" json:"id" example:"1"`
-	CreatedAt                           time.Time      `json:"created_at" example:"2023-01-01T00:00:00Z"`
-	UpdatedAt                           time.Time      `json:"updated_at" example:"2023-01-01T00:00:00Z"`
-	DeletedAt                           gorm.DeletedAt `gorm:"index" json:"-" swaggerignore:"true"`
-	UserID                              uint           `json:"user_id" example:"1"`
-	User                                User           `gorm:"foreignKey:UserID" json:"-"`
-	RiskScore                           float64        `json:"risk_score" example:"0.75"`
-	Age                                 int            `json:"age" example:"30"`
-	AgeContribution                     float64        `json:"age_contribution" example:"0.1"`
-	AgeImpact                           float64        `json:"age_impact" example:"0.2"`
-	AgeExplanation                      string         `gorm:"type:text" json:"age_explanation"`
-	BMI                                 float64        `json:"bmi" example:"22.5"`
-	BMIContribution                     float64        `json:"bmi_contribution" example:"0.15"`
-	BMIImpact                           float64        `json:"bmi_impact" example:"0.25"`
-	BMIExplanation                      string         `gorm:"type:text" json:"bmi_explanation"`
-	BrinkmanScore                       float64        `json:"brinkman_score" example:"0.5"`
-	BrinkmanScoreContribution           float64        `json:"brinkman_score_contribution" example:"0.2"`
-	BrinkmanScoreImpact                 float64        `json:"brinkman_score_impact" example:"0.3"`
-	BrinkmanScoreExplanation            string         `gorm:"type:text" json:"brinkman_score_explanation"`
-	IsHypertension                      bool           `json:"is_hypertension" example:"true"`
-	IsHypertensionContribution          float64        `json:"is_hypertension_contribution" example:"0.1"`
-	IsHypertensionImpact                float64        `json:"is_hypertension_impact" example:"0.2"`
-	IsHypertensionExplanation           string         `gorm:"type:text" json:"is_hypertension_explanation"`
-	IsMacrosomicBaby                    bool           `json:"is_macrosomic_baby" example:"false"`
-	IsMacrosomicBabyContribution        float64        `json:"is_macrosomic_baby_contribution" example:"0.05"`
-	IsMacrosomicBabyImpact              float64        `json:"is_macrosomic_baby_impact" example:"0.1"`
-	IsMacrosomicBabyExplanation         string         `gorm:"type:text" json:"is_macrosomic_baby_explanation"`
-	SmokingStatus                       string         `json:"smoking_status" example:"non_smoker"`
-	SmokingStatusContribution           float64        `json:"smoking_status_contribution" example:"0.1"`
-	SmokingStatusImpact                 float64        `json:"smoking_status_impact" example:"0.2"`
-	SmokingStatusExplanation            string         `gorm:"type:text" json:"smoking_status_explanation"`
-	PhysicalActivityMinutes             int            `json:"physical_activity_minutes" example:"150"`
-	PhysicalActivityMinutesContribution float64        `json:"physical_activity_minutes_contribution" example:"0.1"`
-	PhysicalActivityMinutesImpact       float64        `json:"physical_activity_minutes_impact" example:"0.2"`
-	PhysicalActivityMinutesExplanation  string         `gorm:"type:text" json:"physical_activity_minutes_explanation"`
+	ID                                    uint           `gorm:"primaryKey" json:"id" example:"1"`
+	CreatedAt                             time.Time      `json:"created_at" example:"2023-01-01T00:00:00Z"`
+	UpdatedAt                             time.Time      `json:"updated_at" example:"2023-01-01T00:00:00Z"`
+	DeletedAt                             gorm.DeletedAt `gorm:"index" json:"-" swaggerignore:"true"`
+	UserID                                uint           `json:"user_id" example:"1"`
+	User                                  User           `gorm:"foreignKey:UserID" json:"-"`
+	RiskScore                             float64        `json:"risk_score" example:"0.75"`
+	Age                                   int            `json:"age" example:"30"`
+	AgeContribution                       float64        `json:"age_contribution" example:"0.1"`
+	AgeImpact                             float64        `json:"age_impact" example:"0.2"`
+	AgeExplanation                        string         `gorm:"type:text" json:"age_explanation"`
+	BMI                                   float64        `json:"bmi" example:"22.5"`
+	BMIContribution                       float64        `json:"bmi_contribution" example:"0.15"`
+	BMIImpact                             float64        `json:"bmi_impact" example:"0.25"`
+	BMIExplanation                        string         `gorm:"type:text" json:"bmi_explanation"`
+	BrinkmanScore                         float64        `json:"brinkman_score" example:"0.5"`
+	BrinkmanScoreContribution             float64        `json:"brinkman_score_contribution" example:"0.2"`
+	BrinkmanScoreImpact                   float64        `json:"brinkman_score_impact" example:"0.3"`
+	BrinkmanScoreExplanation              string         `gorm:"type:text" json:"brinkman_score_explanation"`
+	IsHypertension                        bool           `json:"is_hypertension" example:"true"`
+	IsHypertensionContribution            float64        `json:"is_hypertension_contribution" example:"0.1"`
+	IsHypertensionImpact                  float64        `json:"is_hypertension_impact" example:"0.2"`
+	IsHypertensionExplanation             string         `gorm:"type:text" json:"is_hypertension_explanation"`
+	IsCholesterol                         bool           `json:"is_cholesterol" example:"true"`
+	IsCholesterolContribution             float64        `json:"is_cholesterol_contribution" example:"0.1"`
+	IsCholesterolImpact                   float64        `json:"is_cholesterol_impact" example:"0.2"`
+	IsCholesterolExplanation              string         `gorm:"type:text" json:"is_cholesterol_explanation"`
+	IsBloodline                           bool           `json:"is_bloodline" example:"true"`
+	IsBloodlineContribution               float64        `json:"is_bloodline_contribution" example:"0.1"`
+	IsBloodlineImpact                     float64        `json:"is_bloodline_impact" example:"0.2"`
+	IsBloodlineExplanation                string         `gorm:"type:text" json:"is_bloodline_explanation"`
+	IsMacrosomicBaby                      bool           `json:"is_macrosomic_baby" example:"false"`
+	IsMacrosomicBabyContribution          float64        `json:"is_macrosomic_baby_contribution" example:"0.05"`
+	IsMacrosomicBabyImpact                float64        `json:"is_macrosomic_baby_impact" example:"0.1"`
+	IsMacrosomicBabyExplanation           string         `gorm:"type:text" json:"is_macrosomic_baby_explanation"`
+	SmokingStatus                         string         `json:"smoking_status" example:"non_smoker"`
+	SmokingStatusContribution             float64        `json:"smoking_status_contribution" example:"0.1"`
+	SmokingStatusImpact                   float64        `json:"smoking_status_impact" example:"0.2"`
+	SmokingStatusExplanation              string         `gorm:"type:text" json:"smoking_status_explanation"`
+	PhysicalActivityFrequency             int            `json:"physical_activity_frequency" example:"150"`
+	PhysicalActivityFrequencyContribution float64        `json:"physical_activity_frequency_contribution" example:"0.1"`
+	PhysicalActivityFrequencyImpact       float64        `json:"physical_activity_frequency_impact" example:"0.2"`
+	PhysicalActivityFrequencyExplanation  string         `gorm:"type:text" json:"physical_activity_frequency_explanation"`
 }
 
 func (p *Prediction) GetShardKey() int {

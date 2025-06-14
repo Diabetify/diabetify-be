@@ -13,6 +13,8 @@ type UserProfile struct {
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-" swaggerignore:"true"`
 	UserID         uint           `gorm:"unique" json:"user_id" example:"1"`
 	Hypertension   *bool          `json:"hypertension" example:"false"`
+	Cholesterol    *bool          `json:"cholesterol" example:"false"`
+	Bloodline      *bool          `json:"bloodline" example:"false"`
 	Weight         *int           `json:"weight" example:"70"`
 	Height         *int           `json:"height" example:"175"`
 	BMI            *float64       `json:"bmi" example:"22.9"`
