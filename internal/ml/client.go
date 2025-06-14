@@ -165,8 +165,8 @@ func (c *grpcMLClient) Close() error {
 
 // validateFeatures checks if the feature array is valid
 func (c *grpcMLClient) validateFeatures(features []float64) error {
-	// Check if we have exactly 7 features
-	if len(features) != 7 {
+	// Check if we have exactly 9 features
+	if len(features) != 9 {
 		return errors.New("incorrect number of features: expected 7")
 	}
 
@@ -176,18 +176,18 @@ func (c *grpcMLClient) validateFeatures(features []float64) error {
 	}
 
 	// Validate binary features (0/1)
-	if !c.isBinary(features[2]) || !c.isBinary(features[5]) {
-		return errors.New("is_macrosomic_baby, and is_hypertension must be 0 or 1")
+	if !c.isBinary(features[2]) || !c.isBinary(features[3]) || !c.isBinary(features[5]) || !c.isBinary(features[8]) {
+		return errors.New("is_cholesterol, is_macrosomic_baby, is_bloodline, and is_hypertension must be 0 or 1")
 	}
 
 	// Validate BMI (typical range)
-	if features[4] < 10 || features[4] > 60 {
+	if features[7] < 10 || features[7] > 60 {
 		return errors.New("BMI out of typical range (10-60)")
 	}
 
 	// Validate physical activity (non-negative)
-	if features[6] < 0 {
-		return errors.New("physical activity minutes cannot be negative")
+	if features[4] < 0 {
+		return errors.New("physical activity frequency cannot be negative")
 	}
 
 	return nil

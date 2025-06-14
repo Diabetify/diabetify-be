@@ -96,7 +96,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 			"status":  "error",
 			"message": "Incomplete profile data for prediction",
 			"error":   err.Error(),
-			"help":    "Please ensure all required profile fields are filled: age, weight, height, smoking status, macrosomic baby history, hypertension status",
+			"help":    "Please ensure all required profile fields are filled: age, weight, height, smoking status, macrosomic baby history, hypertension status, cholesterol status, diabetes bloodline",
 		})
 		return
 	}
@@ -132,9 +132,11 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	bmiContribution, bmiImpact := getExplanation("BMI")
 	brinkmanContribution, brinkmanImpact := getExplanation("brinkman_index")
 	hypertensionContribution, hypertensionImpact := getExplanation("is_hypertension")
+	cholesterolContribution, cholesterolImpact := getExplanation("is_cholesterol")
+	bloodlineContribution, bloodlineImpact := getExplanation("is_bloodline")
 	macrosomicContribution, macrosomicImpact := getExplanation("is_macrosomic_baby")
 	smokingContribution, smokingImpact := getExplanation("smoking_status")
-	activityContribution, activityImpact := getExplanation("physical_activity_minute")
+	activityContribution, activityImpact := getExplanation("physical_activity_frequency")
 
 	// Create a new prediction record for database
 	prediction := &models.Prediction{
@@ -157,6 +159,14 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		IsHypertensionContribution: hypertensionContribution,
 		IsHypertensionImpact:       hypertensionImpact,
 
+		IsCholesterol:             featureInfo["is_cholesterol"].(bool),
+		IsCholesterolContribution: cholesterolContribution,
+		IsCholesterolImpact:       cholesterolImpact,
+
+		IsBloodline:             featureInfo["is_bloodline"].(bool),
+		IsBloodlineContribution: bloodlineContribution,
+		IsBloodlineImpact:       bloodlineImpact,
+
 		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(bool),
 		IsMacrosomicBabyContribution: macrosomicContribution,
 		IsMacrosomicBabyImpact:       macrosomicImpact,
@@ -165,9 +175,9 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		SmokingStatusContribution: smokingContribution,
 		SmokingStatusImpact:       smokingImpact,
 
-		PhysicalActivityMinutes:             featureInfo["physical_activity_minutes"].(int),
-		PhysicalActivityMinutesContribution: activityContribution,
-		PhysicalActivityMinutesImpact:       activityImpact,
+		PhysicalActivityFrequency:             featureInfo["physical_activity_frequency"].(int),
+		PhysicalActivityFrequencyContribution: activityContribution,
+		PhysicalActivityFrequencyImpact:       activityImpact,
 	}
 
 	// Save to database
@@ -202,13 +212,15 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 			"ml_service_time": response.ElapsedTime,
 			"timestamp":       response.Timestamp,
 			"user_data_used": gin.H{
-				"age":                       featureInfo["age"],
-				"smoking_status":            featureInfo["smoking_status"],
-				"is_macrosomic_baby":        featureInfo["is_macrosomic_baby"],
-				"brinkman_score":            featureInfo["brinkman_score"],
-				"bmi":                       featureInfo["bmi"],
-				"is_hypertension":           featureInfo["is_hypertension"],
-				"physical_activity_minutes": featureInfo["physical_activity_minutes"],
+				"age":                         featureInfo["age"],
+				"smoking_status":              featureInfo["smoking_status"],
+				"is_macrosomic_baby":          featureInfo["is_macrosomic_baby"],
+				"brinkman_score":              featureInfo["brinkman_score"],
+				"bmi":                         featureInfo["bmi"],
+				"is_hypertension":             featureInfo["is_hypertension"],
+				"is_cholesterol":              featureInfo["is_cholesterol"],
+				"is_bloodline":                featureInfo["is_bloodline"],
+				"physical_activity_frequency": featureInfo["physical_activity_frequency"],
 			},
 			"feature_explanations": response.Explanation,
 		},
@@ -233,6 +245,18 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		return nil, nil, fmt.Errorf("hypertension status is required but not found")
 	}
 	isHypertension := *profile.Hypertension
+
+	// Check Cholesterol (safely handle nil)
+	if profile.Cholesterol == nil {
+		return nil, nil, fmt.Errorf("cholesterol status is required but not found")
+	}
+	isCholesterol := *profile.Cholesterol
+
+	// Check Bloodline (safely handle nil)
+	if profile.Bloodline == nil {
+		return nil, nil, fmt.Errorf("bloodline status is required but not found")
+	}
+	isBloodline := *profile.Bloodline
 
 	// Calculate age from string DOB
 	if user.DOB == nil {
@@ -270,31 +294,35 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
 	}
 
-	// Calculate physical activity (average minutes per 8 weeks)
-	physicalActivityMinutes, err := pc.calculatePhysicalActivityMinutes(userID)
+	// Calculate physical activity (sum frequency per 1 week)
+	physicalActivityFrequency, err := pc.calculatePhysicalActivityFrequency(userID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
 	}
 
 	// Create features array for ML model
 	features := []float64{
-		float64(age),                     // 1. Age
-		float64(smokingStatus),           // 2. Smoking status (0, 1, or 2)
-		boolToFloat(isMacrosomicBaby),    // 3. Is macrosomic baby (0 or 1)
-		brinkmanIndex,                    // 4. Brinkman index
-		bmi,                              // 5. BMI
-		boolToFloat(isHypertension),      // 6. Is hypertension (0 or 1)
-		float64(physicalActivityMinutes), // 7. Physical activity minutes
+		float64(age),                       // 1. Age
+		float64(smokingStatus),             // 2. Smoking status (0, 1, or 2)
+		boolToFloat(isCholesterol),         // 3. Is cholesterol (0 or 1)
+		boolToFloat(isMacrosomicBaby),      // 4. Is macrosomic baby (0 or 1)
+		float64(physicalActivityFrequency), // 5. Physical activity frequency
+		boolToFloat(isBloodline),           // 6. Is bloodline (0 or 1)
+		brinkmanIndex,                      // 7. Brinkman index
+		bmi,                                // 8. BMI
+		boolToFloat(isHypertension),        // 9. Is hypertension (0 or 1)
 	}
 
 	featureInfo := map[string]interface{}{
-		"age":                       age,
-		"smoking_status":            smokingStatus,
-		"is_macrosomic_baby":        isMacrosomicBaby,
-		"brinkman_score":            brinkmanIndex,
-		"bmi":                       bmi,
-		"is_hypertension":           isHypertension,
-		"physical_activity_minutes": physicalActivityMinutes,
+		"age":                         age,
+		"smoking_status":              smokingStatus,
+		"is_macrosomic_baby":          isMacrosomicBaby,
+		"brinkman_score":              brinkmanIndex,
+		"bmi":                         bmi,
+		"is_hypertension":             isHypertension,
+		"is_cholesterol":              isCholesterol,
+		"is_bloodline":                isBloodline,
+		"physical_activity_frequency": physicalActivityFrequency,
 	}
 
 	return features, featureInfo, nil
@@ -380,23 +408,23 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, er
 	return math.Round(brinkmanIndex*10) / 10, nil
 }
 
-// calculatePhysicalActivityMinutes calculates average workout minutes per 2 weeks
-func (pc *PredictionController) calculatePhysicalActivityMinutes(userID uint) (int, error) {
+// calculatePhysicalActivityFrequency calculates sum workout frequency per 1 week
+func (pc *PredictionController) calculatePhysicalActivityFrequency(userID uint) (int, error) {
 	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -14)
+	startDate := endDate.AddDate(0, 0, -7)
 
 	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
 	if err != nil {
 		return 0, err
 	}
 
-	totalMinutes := 0
+	totalFrequency := 0
 	for _, activity := range activities {
-		totalMinutes += activity.Value
+		totalFrequency += activity.Value
 	}
 
-	// Calculate average minutes per day over the 14 days
-	return totalMinutes, nil
+	// Calculate sum frequency per day over the 7 days
+	return totalFrequency, nil
 }
 
 // TestMLConnection godoc
@@ -757,19 +785,23 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 		prediction.BMIExplanation != "" &&
 		prediction.BrinkmanScoreExplanation != "" &&
 		prediction.IsHypertensionExplanation != "" &&
+		prediction.IsCholesterolExplanation != "" &&
+		prediction.IsBloodlineExplanation != "" &&
 		prediction.IsMacrosomicBabyExplanation != "" &&
 		prediction.SmokingStatusExplanation != "" &&
-		prediction.PhysicalActivityMinutesExplanation != ""
+		prediction.PhysicalActivityFrequencyExplanation != ""
 
 	if hasExplanations {
 		factorExplanations := map[string]string{
-			"age":                      prediction.AgeExplanation,
-			"bmi":                      prediction.BMIExplanation,
-			"brinkman_score":           prediction.BrinkmanScoreExplanation,
-			"is_hypertension":          prediction.IsHypertensionExplanation,
-			"is_macrosomic_baby":       prediction.IsMacrosomicBabyExplanation,
-			"smoking_status":           prediction.SmokingStatusExplanation,
-			"physical_activity_minute": prediction.PhysicalActivityMinutesExplanation,
+			"age":                         prediction.AgeExplanation,
+			"bmi":                         prediction.BMIExplanation,
+			"brinkman_score":              prediction.BrinkmanScoreExplanation,
+			"is_hypertension":             prediction.IsHypertensionExplanation,
+			"is_cholesterol":              prediction.IsCholesterolExplanation,
+			"is_bloodline":                prediction.IsBloodlineExplanation,
+			"is_macrosomic_baby":          prediction.IsMacrosomicBabyExplanation,
+			"smoking_status":              prediction.SmokingStatusExplanation,
+			"physical_activity_frequency": prediction.PhysicalActivityFrequencyExplanation,
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -827,6 +859,16 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 			Contribution: prediction.IsHypertensionContribution,
 			Impact:       prediction.IsHypertensionImpact,
 		},
+		"is_cholesterol": {
+			Value:        fmt.Sprintf("%v", prediction.IsCholesterol),
+			Contribution: prediction.IsCholesterolContribution,
+			Impact:       prediction.IsCholesterolImpact,
+		},
+		"is_bloodline": {
+			Value:        fmt.Sprintf("%v", prediction.IsBloodline),
+			Contribution: prediction.IsBloodlineContribution,
+			Impact:       prediction.IsBloodlineImpact,
+		},
 		"is_macrosomic_baby": {
 			Value:        fmt.Sprintf("%v", prediction.IsMacrosomicBaby),
 			Contribution: prediction.IsMacrosomicBabyContribution,
@@ -837,10 +879,10 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 			Contribution: prediction.SmokingStatusContribution,
 			Impact:       prediction.SmokingStatusImpact,
 		},
-		"physical_activity_minute": {
-			Value:        fmt.Sprintf("%d minutes", prediction.PhysicalActivityMinutes),
-			Contribution: prediction.PhysicalActivityMinutesContribution,
-			Impact:       prediction.PhysicalActivityMinutesImpact,
+		"physical_activity_frequency": {
+			Value:        fmt.Sprintf("%d times", prediction.PhysicalActivityFrequency),
+			Contribution: prediction.PhysicalActivityFrequencyContribution,
+			Impact:       prediction.PhysicalActivityFrequencyImpact,
 		},
 	}
 
@@ -868,9 +910,11 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 	prediction.BMIExplanation = explanations["bmi"].Explanation
 	prediction.BrinkmanScoreExplanation = explanations["brinkman_score"].Explanation
 	prediction.IsHypertensionExplanation = explanations["is_hypertension"].Explanation
+	prediction.IsCholesterolExplanation = explanations["is_cholesterol"].Explanation
+	prediction.IsBloodlineExplanation = explanations["is_bloodline"].Explanation
 	prediction.IsMacrosomicBabyExplanation = explanations["is_macrosomic_baby"].Explanation
 	prediction.SmokingStatusExplanation = explanations["smoking_status"].Explanation
-	prediction.PhysicalActivityMinutesExplanation = explanations["physical_activity_minute"].Explanation
+	prediction.PhysicalActivityFrequencyExplanation = explanations["physical_activity_frequency"].Explanation
 
 	if err := pc.repo.UpdatePrediction(prediction); err != nil {
 		log.Printf("Error saving explanations to database: %v", err)

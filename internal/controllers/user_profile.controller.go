@@ -73,6 +73,7 @@ func (pc *UserProfileController) GetUserProfile(c *gin.Context) {
 // @Router /profile [post]
 func (pc *UserProfileController) CreateUserProfile(c *gin.Context) {
 	var profile models.UserProfile
+
 	if err := c.ShouldBindJSON(&profile); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
