@@ -67,7 +67,6 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	// Get user data
 	user, err := pc.userRepo.GetUserByID(userID.(uint))
 	if err != nil {
-		log.Printf("Error getting user by ID %d: %v", userID.(uint), err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "User not found",
@@ -78,9 +77,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 
 	// Get user profile
 	profile, err := pc.profileRepo.FindByUserID(userID.(uint))
-	log.Printf("Fetching profile for user ID %d", userID.(uint))
 	if err != nil {
-		log.Printf("Error getting user profile for user ID %d: %v", userID.(uint), err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "User profile not found. Please complete your profile first.",
@@ -104,9 +101,6 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	// Create context with timeout for gRPC call
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
-
-	// Log the features being sent for prediction
-	log.Printf("Features for prediction: %v", features)
 
 	// Call the ML service via gRPC
 	response, err := pc.mlClient.Predict(ctx, features)
@@ -193,7 +187,6 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	// Update the last prediction time for the user
 	now := time.Now()
 	if err := pc.userRepo.UpdateLastPredictionTime(userID.(uint), &now); err != nil {
-		log.Printf("Error updating last prediction time for user ID %d: %v", userID.(uint), err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Failed to update last prediction time",
@@ -826,7 +819,6 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 	}
 
 	if os.Getenv("OPENAI_API_KEY") == "" {
-		log.Printf("OPENAI_API_KEY environment variable is not set")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "OpenAI API key is not configured",
@@ -836,7 +828,6 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 
 	openaiClient, err := openai.NewClient()
 	if err != nil {
-		log.Printf("Error creating OpenAI client: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Failed to initialize OpenAI client",
@@ -899,7 +890,6 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 
 	explanations, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
 	if err != nil {
-		log.Printf("Error generating LLM explanation: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Failed to generate LLM explanation",
@@ -909,7 +899,6 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 	}
 
 	if len(explanations) == 0 {
-		log.Printf("No explanations returned from OpenAI")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "No explanations were generated",
@@ -926,10 +915,6 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 	prediction.IsMacrosomicBabyExplanation = explanations["is_macrosomic_baby"].Explanation
 	prediction.SmokingStatusExplanation = explanations["smoking_status"].Explanation
 	prediction.PhysicalActivityFrequencyExplanation = explanations["physical_activity_frequency"].Explanation
-
-	if err := pc.repo.UpdatePrediction(prediction); err != nil {
-		log.Printf("Error saving explanations to database: %v", err)
-	}
 
 	factorExplanations := make(map[string]string)
 	for factor, exp := range explanations {
