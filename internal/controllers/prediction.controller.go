@@ -136,7 +136,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	bloodlineContribution, bloodlineImpact := getExplanation("is_bloodline")
 	macrosomicContribution, macrosomicImpact := getExplanation("is_macrosomic_baby")
 	smokingContribution, smokingImpact := getExplanation("smoking_status")
-	activityContribution, activityImpact := getExplanation("physical_activity_frequency")
+	activityContribution, activityImpact := getExplanation("moderate_physical_activity_frequency")
 
 	// Create a new prediction record for database
 	prediction := &models.Prediction{
@@ -289,13 +289,13 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 	}
 
 	// Calculate Brinkman index from smoking activities
-	brinkmanIndex, err := pc.calculateBrinkmanIndex(userID)
+	brinkmanIndex, err := pc.calculateBrinkmanIndex(userID, profile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
 	}
 
 	// Calculate physical activity (sum frequency per 1 week)
-	physicalActivityFrequency, err := pc.calculatePhysicalActivityFrequency(userID)
+	physicalActivityFrequency, err := pc.calculatePhysicalActivityFrequency(userID, profile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
 	}
@@ -370,33 +370,38 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 }
 
 // calculateBrinkmanIndex calculates Brinkman index from smoking activities
-func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, error) {
+func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *models.UserProfile) (float64, error) {
 	// Get smoking activities from last 14 days
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -14)
 
-	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
-	if err != nil {
-		return 0.0, err
-	}
-
-	if len(activities) == 0 {
-		return 0.0, nil
-	}
+	var avgCigarettesPerDay float64
 
 	// Calculate average cigarettes per day
-	totalCigarettes := 0
-	for _, activity := range activities {
-		totalCigarettes += activity.Value
+	if profile.CreatedAt.Before(startDate) {
+		activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
+		if err != nil {
+			return 0.0, err
+		}
+
+		if len(activities) == 0 {
+			return 0.0, nil
+		}
+		totalCigarettes := 0
+		for _, activity := range activities {
+			totalCigarettes += activity.Value
+		}
+
+		avgCigarettesPerDay = float64(totalCigarettes) / 14.0 // Average over 14 days
+	} else if profile.SmokeCount != nil {
+		avgCigarettesPerDay = float64(*profile.SmokeCount)
 	}
 
-	avgCigarettesPerDay := float64(totalCigarettes) / 14.0 // Average over 14 days
-
-	// Get estimated years of smoking from user profile
-	profile, err := pc.profileRepo.FindByUserID(userID)
-	if err != nil {
-		return 0.0, fmt.Errorf("failed to get user profile: %v", err)
-	}
+	// // Get estimated years of smoking from user profile
+	// profile, err := pc.profileRepo.FindByUserID(userID)
+	// if err != nil {
+	// 	return 0.0, fmt.Errorf("failed to get user profile: %v", err)
+	// }
 	estimatedYears := 0
 	if profile.YearOfSmoking != nil {
 		estimatedYears = *profile.YearOfSmoking
@@ -409,18 +414,24 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint) (float64, er
 }
 
 // calculatePhysicalActivityFrequency calculates sum workout frequency per 1 week
-func (pc *PredictionController) calculatePhysicalActivityFrequency(userID uint) (int, error) {
+func (pc *PredictionController) calculatePhysicalActivityFrequency(userID uint, profile *models.UserProfile) (int, error) {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -7)
 
-	activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
-	if err != nil {
-		return 0, err
-	}
+	var totalFrequency int
 
-	totalFrequency := 0
-	for _, activity := range activities {
-		totalFrequency += activity.Value
+	if profile.CreatedAt.Before(startDate) {
+		activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
+		if err != nil {
+			return 0, err
+		}
+
+		totalFrequency := 0
+		for _, activity := range activities {
+			totalFrequency += activity.Value
+		}
+	} else if profile.PhysicalActivityFrequency != nil {
+		totalFrequency = *profile.PhysicalActivityFrequency
 	}
 
 	// Calculate sum frequency per day over the 7 days
