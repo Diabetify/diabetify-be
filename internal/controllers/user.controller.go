@@ -173,20 +173,41 @@ func (uc *UserController) GetUserByID(c *gin.Context) {
 }
 
 // UpdateUser godoc
-// @Summary Update a user
-// @Description Update user information
+// @Summary Update current user
+// @Description Update the authenticated user's information
 // @Tags users
 // @Accept json
 // @Produce json
-// @Param id path int true "User ID"
+// @Security BearerAuth
 // @Param user body models.User true "User data"
 // @Success 200 {object} map[string]interface{} "User updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "User not found"
 // @Failure 500 {object} map[string]interface{} "Failed to update user"
-// @Router /users/{id} [put]
+// @Router /users/me [put]
 func (uc *UserController) UpdateUser(c *gin.Context) {
-	var user models.User
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized",
+			"error":   "User ID not found in token",
+		})
+		return
+	}
 
+	existingUser, err := uc.repo.GetUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User not found",
+			"error":   "No user exists with the provided ID",
+		})
+		return
+	}
+
+	var user models.User
 	if err := c.ShouldBindJSON(&user); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -194,6 +215,45 @@ func (uc *UserController) UpdateUser(c *gin.Context) {
 			"error":   err.Error(),
 		})
 		return
+	}
+
+	// Set the user ID from the JWT token
+	user.ID = userID.(uint)
+
+	// Handle password hashing if password is provided
+	if user.Password != "" {
+		if len(user.Password) < 8 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Password must be at least 8 characters",
+				"error":   "Invalid password",
+			})
+			return
+		}
+
+		hashedPassword, err := hashPassword(user.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to hash password",
+				"error":   "Internal server error",
+			})
+			return
+		}
+		user.Password = hashedPassword
+	}
+
+	// Prevent changing email to one that already exists
+	if user.Email != "" && user.Email != existingUser.Email {
+		_, err := uc.repo.GetUserByEmail(user.Email)
+		if err == nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Email already in use",
+				"error":   "Email address is already registered",
+			})
+			return
+		}
 	}
 
 	if err := uc.repo.UpdateUser(&user); err != nil {
@@ -204,6 +264,8 @@ func (uc *UserController) UpdateUser(c *gin.Context) {
 		})
 		return
 	}
+
+	user.Password = ""
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
@@ -547,21 +609,11 @@ func (uc *UserController) PatchUser(c *gin.Context) {
 		patchData["password"] = hashedPassword
 	}
 
-	// Prevent user from changing their role
-	if _, hasRole := patchData["role"]; hasRole {
-		// Check if user is admin
-		userRole, roleExists := c.Get("role")
-		if !roleExists || userRole.(string) != "admin" {
-			// Non-admin users cannot change their role
-			delete(patchData, "role")
-		}
-	}
-
 	// Prevent changing email to one that already exists
 	if email, hasEmail := patchData["email"].(string); hasEmail && email != existingUser.Email {
 		// Check if email already exists
 		_, err := uc.repo.GetUserByEmail(email)
-		if err == nil { // No error means email exists
+		if err == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "error",
 				"message": "Email already in use",
@@ -634,9 +686,6 @@ func (uc *UserController) GetCurrentUser(c *gin.Context) {
 		})
 		return
 	}
-
-	// Remove sensitive information
-	user.Password = ""
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
