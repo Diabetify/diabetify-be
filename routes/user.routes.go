@@ -19,9 +19,7 @@ func RegisterUserRoutes(router *gin.Engine, userController *controllers.UserCont
 	userRoutesPrivate.Use(middleware.AuthMiddleware())
 	{
 		userRoutesPrivate.GET("/me", userController.GetCurrentUser)
-		userRoutesPrivate.GET("/:id", userController.GetUserByID)
-		userRoutesPrivate.PUT("/:id", userController.UpdateUser)
-		userRoutesPrivate.PATCH("/:id", userController.PatchUser)
-		userRoutesPrivate.DELETE("/:id", userController.DeleteUser)
+		userRoutesPrivate.PUT("/me", userController.UpdateUser)
+		userRoutesPrivate.PATCH("/me", userController.PatchUser)
 	}
 }
