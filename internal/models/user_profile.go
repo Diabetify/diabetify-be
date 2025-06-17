@@ -18,7 +18,7 @@ type UserProfile struct {
 	Weight                    *int           `json:"weight" example:"70"`
 	Height                    *int           `json:"height" example:"175"`
 	BMI                       *float64       `json:"bmi" example:"22.9"`
-	Smoking                   *bool          `gorm:"column:smoking" json:"smoking" example:"false"`
+	Smoking                   *int           `gorm:"column:smoking;check:smoking IN (0,1,2)" json:"smoking" example:"0" validate:"min=0,max=2"`
 	YearOfSmoking             *int           `gorm:"column:year_of_smoking" json:"year_of_smoking" example:"5"`
 	MacrosomicBaby            *bool          `gorm:"column:macrosomic_baby" json:"macrosomic_baby" example:"false"`
 	PhysicalActivityFrequency *int           `json:"physical_activity_frequency" example:"3"`
