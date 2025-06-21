@@ -117,7 +117,15 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 	user.Password = hashedPassword
 
 	user.Verified = false
-
+	// Check if email already exists
+	if _, err := uc.repo.GetUserByEmail(user.Email); err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Email already in use",
+			"error":   "Email address is already registered",
+		})
+		return
+	}
 	if err := uc.repo.CreateUser(&user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
