@@ -7,7 +7,6 @@ import (
 	"diabetify/internal/openai"
 	"diabetify/internal/repository"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"os"
