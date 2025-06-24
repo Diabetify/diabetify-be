@@ -222,6 +222,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 				"is_cholesterol":              featureInfo["is_cholesterol"],
 				"is_bloodline":                featureInfo["is_bloodline"],
 				"physical_activity_frequency": featureInfo["physical_activity_frequency"],
+				"avg_smoke_count":             featureInfo["avg_smoke_count"],
 			},
 			"feature_explanations": response.Explanation,
 		},
@@ -316,6 +317,7 @@ func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
 				"is_cholesterol":              featureInfo["is_cholesterol"],
 				"is_bloodline":                featureInfo["is_bloodline"],
 				"physical_activity_frequency": featureInfo["physical_activity_frequency"],
+				"avg_smoke_count":             featureInfo["avg_smoke_count"],
 			},
 			"feature_explanations": response.Explanation,
 		},
@@ -366,6 +368,7 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		physicalActivityFrequency int
 		isCholesterol             bool
 		brinkmanIndex             int
+		avgSmokeCount             int
 	)
 
 	if input == nil {
@@ -416,7 +419,7 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 			yearsOfSmoking = *profile.YearOfSmoking
 		}
 
-		avgSmokeCount := 0
+		avgSmokeCount = 0
 		if input.AvgSmokeCount != 0 {
 			avgSmokeCount = input.AvgSmokeCount
 		}
@@ -458,6 +461,7 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		"is_cholesterol":              isCholesterol,
 		"is_bloodline":                isBloodline,
 		"physical_activity_frequency": physicalActivityFrequency,
+		"avg_smoke_count":             avgSmokeCount,
 	}
 
 	return features, featureInfo, nil
