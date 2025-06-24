@@ -22,7 +22,7 @@ type Prediction struct {
 	BMIContribution                       float64        `json:"bmi_contribution" example:"0.15"`
 	BMIImpact                             float64        `json:"bmi_impact" example:"0.25"`
 	BMIExplanation                        string         `gorm:"type:text" json:"bmi_explanation"`
-	BrinkmanScore                         float64        `json:"brinkman_score" example:"0.5"`
+	BrinkmanScore                         int            `gorm:"column:brinkman_score;check:brinkman_score IN (0,1,2,3)" json:"brinkman_score" example:"0" validate:"min=0,max=3"`
 	BrinkmanScoreContribution             float64        `json:"brinkman_score_contribution" example:"0.2"`
 	BrinkmanScoreImpact                   float64        `json:"brinkman_score_impact" example:"0.3"`
 	BrinkmanScoreExplanation              string         `gorm:"type:text" json:"brinkman_score_explanation"`
@@ -38,11 +38,11 @@ type Prediction struct {
 	IsBloodlineContribution               float64        `json:"is_bloodline_contribution" example:"0.1"`
 	IsBloodlineImpact                     float64        `json:"is_bloodline_impact" example:"0.2"`
 	IsBloodlineExplanation                string         `gorm:"type:text" json:"is_bloodline_explanation"`
-	IsMacrosomicBaby                      bool           `json:"is_macrosomic_baby" example:"false"`
+	IsMacrosomicBaby                      int            `gorm:"column:macrosomic_baby" json:"macrosomic_baby" example:"0"`
 	IsMacrosomicBabyContribution          float64        `json:"is_macrosomic_baby_contribution" example:"0.05"`
 	IsMacrosomicBabyImpact                float64        `json:"is_macrosomic_baby_impact" example:"0.1"`
 	IsMacrosomicBabyExplanation           string         `gorm:"type:text" json:"is_macrosomic_baby_explanation"`
-	SmokingStatus                         string         `json:"smoking_status" example:"non_smoker"`
+	SmokingStatus                         int            `gorm:"column:smoking_status;check:smoking_status IN (0,1,2)" json:"smoking_status" example:"0" validate:"min=0,max=2"`
 	SmokingStatusContribution             float64        `json:"smoking_status_contribution" example:"0.1"`
 	SmokingStatusImpact                   float64        `json:"smoking_status_impact" example:"0.2"`
 	SmokingStatusExplanation              string         `gorm:"type:text" json:"smoking_status_explanation"`

@@ -40,6 +40,15 @@ func NewPredictionController(
 	}
 }
 
+type WhatIfInput struct {
+	SmokingStatus             int     `json:"smoking_status" binding:"oneof=0 1 2"`
+	AvgSmokeCount             int     `json:"avg_smoke_count" binding:"min=0"`
+	Weight                    float64 `json:"weight" binding:"min=1"`
+	IsHypertension            bool    `json:"is_hypertension"`
+	PhysicalActivityFrequency int     `json:"physical_activity_frequency" binding:"min=0"`
+	IsCholesterol             bool    `json:"is_cholesterol"`
+}
+
 // MakePrediction godoc
 // @Summary Make a prediction using user's profile data automatically
 // @Description Automatically fetch user data from database and make diabetes risk prediction via gRPC (requires authentication)
@@ -86,7 +95,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	}
 
 	// Calculate features from user data
-	features, featureInfo, err := pc.calculateFeaturesFromProfile(user, profile, userID.(uint))
+	features, featureInfo, err := pc.calculateFeaturesFromProfile(user, profile, userID.(uint), nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -144,7 +153,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		BMIContribution: bmiContribution,
 		BMIImpact:       bmiImpact,
 
-		BrinkmanScore:             featureInfo["brinkman_score"].(float64),
+		BrinkmanScore:             featureInfo["brinkman_score"].(int),
 		BrinkmanScoreContribution: brinkmanContribution,
 		BrinkmanScoreImpact:       brinkmanImpact,
 
@@ -160,11 +169,11 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		IsBloodlineContribution: bloodlineContribution,
 		IsBloodlineImpact:       bloodlineImpact,
 
-		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(bool),
+		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(int),
 		IsMacrosomicBabyContribution: macrosomicContribution,
 		IsMacrosomicBabyImpact:       macrosomicImpact,
 
-		SmokingStatus:             fmt.Sprintf("%v", featureInfo["smoking_status"]), // Convert to string
+		SmokingStatus:             featureInfo["smoking_status"].(int),
 		SmokingStatusContribution: smokingContribution,
 		SmokingStatusImpact:       smokingImpact,
 
@@ -219,37 +228,101 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	})
 }
 
-func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint) ([]float64, map[string]interface{}, error) {
-	// Check BMI
-	if profile.BMI == nil {
-		return nil, nil, fmt.Errorf("BMI is required but not found")
+func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
+	var input WhatIfInput
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
 	}
-	bmi := *profile.BMI
 
-	// Check MacrosomicBaby (safely handle nil)
-	if profile.MacrosomicBaby == nil {
-		return nil, nil, fmt.Errorf("macrosomic baby history is required but not found")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid input format",
+			"error":   err.Error(),
+		})
+		return
 	}
-	isMacrosomicBaby := *profile.MacrosomicBaby
 
-	// Check Hypertension (safely handle nil)
-	if profile.Hypertension == nil {
-		return nil, nil, fmt.Errorf("hypertension status is required but not found")
+	// Get user data
+	user, err := pc.userRepo.GetUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User not found",
+			"error":   err.Error(),
+		})
+		return
 	}
-	isHypertension := *profile.Hypertension
 
-	// Check Cholesterol (safely handle nil)
-	if profile.Cholesterol == nil {
-		return nil, nil, fmt.Errorf("cholesterol status is required but not found")
+	// Get user profile
+	profile, err := pc.profileRepo.FindByUserID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "User profile not found. Please complete your profile first.",
+			"error":   err.Error(),
+		})
+		return
 	}
-	isCholesterol := *profile.Cholesterol
 
-	// Check Bloodline (safely handle nil)
-	if profile.Bloodline == nil {
-		return nil, nil, fmt.Errorf("bloodline status is required but not found")
+	// Calculate features from user data
+	features, featureInfo, err := pc.calculateFeaturesFromProfile(user, profile, userID.(uint), &input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Incomplete profile data for prediction",
+			"error":   err.Error(),
+			"help":    "Please ensure all required profile fields are filled: age, weight, height, smoking status, macrosomic baby history, hypertension status, cholesterol status, diabetes bloodline",
+		})
+		return
 	}
-	isBloodline := *profile.Bloodline
 
+	// Create context with timeout for gRPC call
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call the ML service via gRPC
+	response, err := pc.mlClient.Predict(ctx, features)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Prediction failed",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Return comprehensive response
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Prediction successful via gRPC using your profile data",
+		"data": gin.H{
+			"risk_score":      response.Prediction,
+			"risk_percentage": response.Prediction * 100,
+			"ml_service_time": response.ElapsedTime,
+			"timestamp":       response.Timestamp,
+			"user_data_used": gin.H{
+				"age":                         featureInfo["age"],
+				"smoking_status":              featureInfo["smoking_status"],
+				"is_macrosomic_baby":          featureInfo["is_macrosomic_baby"],
+				"brinkman_score":              featureInfo["brinkman_score"],
+				"bmi":                         featureInfo["bmi"],
+				"is_hypertension":             featureInfo["is_hypertension"],
+				"is_cholesterol":              featureInfo["is_cholesterol"],
+				"is_bloodline":                featureInfo["is_bloodline"],
+				"physical_activity_frequency": featureInfo["physical_activity_frequency"],
+			},
+			"feature_explanations": response.Explanation,
+		},
+	})
+}
+
+func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *WhatIfInput) ([]float64, map[string]interface{}, error) {
 	// Calculate age from string DOB
 	if user.DOB == nil {
 		return nil, nil, fmt.Errorf("date of birth is required but not found")
@@ -274,22 +347,92 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		age--
 	}
 
-	// Calculate smoking status based on activity data (last 8 weeks)
-	smokingStatus, err := pc.calculateSmokingStatus(userID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to calculate smoking status: %v", err)
+	// Check MacrosomicBaby (safely handle nil)
+	if profile.MacrosomicBaby == nil {
+		return nil, nil, fmt.Errorf("macrosomic baby history is required but not found")
 	}
+	isMacrosomicBaby := *profile.MacrosomicBaby
 
-	// Calculate Brinkman index from smoking activities
-	brinkmanIndex, err := pc.calculateBrinkmanIndex(userID, profile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
+	// Check Bloodline (safely handle nil)
+	if profile.Bloodline == nil {
+		return nil, nil, fmt.Errorf("bloodline status is required but not found")
 	}
+	isBloodline := *profile.Bloodline
 
-	// Calculate physical activity (sum frequency per 1 week)
-	physicalActivityFrequency, err := pc.calculatePhysicalActivityFrequency(userID, profile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
+	var (
+		smokingStatus             int
+		bmi                       float64
+		isHypertension            bool
+		physicalActivityFrequency int
+		isCholesterol             bool
+		brinkmanIndex             int
+	)
+
+	if input == nil {
+		// Check BMI
+		if profile.BMI == nil {
+			return nil, nil, fmt.Errorf("BMI is required but not found")
+		}
+		bmi = *profile.BMI
+
+		// Check Hypertension (safely handle nil)
+		if profile.Hypertension == nil {
+			return nil, nil, fmt.Errorf("hypertension status is required but not found")
+		}
+		isHypertension = *profile.Hypertension
+
+		// Check Cholesterol (safely handle nil)
+		if profile.Cholesterol == nil {
+			return nil, nil, fmt.Errorf("cholesterol status is required but not found")
+		}
+		isCholesterol = *profile.Cholesterol
+
+		// Calculate smoking status based on activity data (last 8 weeks)
+		smokingStatus, err = pc.calculateSmokingStatus(userID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate smoking status: %v", err)
+		}
+
+		// Calculate physical activity (sum frequency per 1 week)
+		physicalActivityFrequency, err = pc.calculatePhysicalActivityFrequency(userID, profile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
+		}
+
+		// Calculate Brinkman index from smoking activities
+		brinkmanIndex, err = pc.calculateBrinkmanIndex(userID, profile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
+		}
+	} else {
+		smokingStatus = input.SmokingStatus
+		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
+		isHypertension = input.IsHypertension
+		physicalActivityFrequency = input.PhysicalActivityFrequency
+		isCholesterol = input.IsCholesterol
+
+		yearsOfSmoking := 0
+		if profile.YearOfSmoking != nil {
+			yearsOfSmoking = *profile.YearOfSmoking
+		}
+
+		avgSmokeCount := 0
+		if input.AvgSmokeCount != 0 {
+			avgSmokeCount = input.AvgSmokeCount
+		}
+
+		brinkmanIndex = yearsOfSmoking * avgSmokeCount
+
+		switch {
+		case brinkmanIndex <= 0:
+			brinkmanIndex = 0
+		case brinkmanIndex < 200:
+			brinkmanIndex = 1
+		case brinkmanIndex < 600:
+			brinkmanIndex = 2
+		default:
+			brinkmanIndex = 3
+		}
 	}
 
 	// Create features array for ML model
@@ -297,10 +440,10 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		float64(age),                       // 1. Age
 		float64(smokingStatus),             // 2. Smoking status (0, 1, or 2)
 		boolToFloat(isCholesterol),         // 3. Is cholesterol (0 or 1)
-		boolToFloat(isMacrosomicBaby),      // 4. Is macrosomic baby (0 or 1)
+		float64(isMacrosomicBaby),          // 4. Is macrosomic baby (0, 1, or 2)
 		float64(physicalActivityFrequency), // 5. Physical activity frequency
 		boolToFloat(isBloodline),           // 6. Is bloodline (0 or 1)
-		brinkmanIndex,                      // 7. Brinkman index
+		float64(brinkmanIndex),             // 7. Brinkman index
 		bmi,                                // 8. BMI
 		boolToFloat(isHypertension),        // 9. Is hypertension (0 or 1)
 	}
@@ -362,7 +505,7 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 }
 
 // calculateBrinkmanIndex calculates Brinkman index from smoking activities
-func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *models.UserProfile) (float64, error) {
+func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *models.UserProfile) (int, error) {
 	// Get smoking activities from last 14 days
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -14)
@@ -401,8 +544,21 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *mod
 
 	// Brinkman Index = cigarettes per day × years of smoking
 	brinkmanIndex := avgCigarettesPerDay * float64(estimatedYears)
+	brinkmanIndex = math.Round(brinkmanIndex*10) / 10
 
-	return math.Round(brinkmanIndex*10) / 10, nil
+	var category int
+	switch {
+	case brinkmanIndex <= 0:
+		category = 0
+	case brinkmanIndex < 200:
+		category = 1
+	case brinkmanIndex < 600:
+		category = 2
+	default:
+		category = 3
+	}
+
+	return category, nil
 }
 
 // calculatePhysicalActivityFrequency calculates sum workout frequency per 1 week
@@ -876,7 +1032,7 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 			Impact:       prediction.IsMacrosomicBabyImpact,
 		},
 		"smoking_status": {
-			Value:        prediction.SmokingStatus,
+			Value:        fmt.Sprintf("%v", prediction.SmokingStatus),
 			Contribution: prediction.SmokingStatusContribution,
 			Impact:       prediction.SmokingStatusImpact,
 		},

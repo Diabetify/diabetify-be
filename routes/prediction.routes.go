@@ -13,6 +13,7 @@ func RegisterPredictionRoutes(router *gin.Engine, predictionController *controll
 	predictionRoutes.Use(middleware.AuthMiddleware())
 	{
 		predictionRoutes.POST("/", predictionController.MakePrediction)
+		predictionRoutes.POST("/what-if", predictionController.WhatIfPrediction)
 		predictionRoutes.GET("/:id", predictionController.GetPredictionByID)
 		predictionRoutes.DELETE("/:id", predictionController.DeletePrediction)
 		predictionRoutes.GET("/me", predictionController.GetUserPredictions)
