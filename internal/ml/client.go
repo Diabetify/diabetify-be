@@ -128,7 +128,7 @@ func (c *grpcMLClient) validateFeatures(features []float64) error {
 	}
 
 	// Validate binary features (0/1)
-	if !c.isBinary(features[2]) || !c.isBinary(features[3]) || !c.isBinary(features[5]) || !c.isBinary(features[8]) {
+	if !c.isBinary(features[2]) || !c.isBinary(features[5]) || !c.isBinary(features[8]) {
 		return errors.New("is_cholesterol, is_macrosomic_baby, is_bloodline, and is_hypertension must be 0 or 1")
 	}
 
