@@ -67,8 +67,9 @@ func (x *PredictionRequest) GetFeatures() []float64 {
 
 type FeatureExplanation struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Contribution  float64                `protobuf:"fixed64,1,opt,name=contribution,proto3" json:"contribution,omitempty"`
-	Impact        int32                  `protobuf:"varint,2,opt,name=impact,proto3" json:"impact,omitempty"`
+	Shap          float64                `protobuf:"fixed64,1,opt,name=shap,proto3" json:"shap,omitempty"`
+	Contribution  float64                `protobuf:"fixed64,2,opt,name=contribution,proto3" json:"contribution,omitempty"`
+	Impact        int32                  `protobuf:"varint,3,opt,name=impact,proto3" json:"impact,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -101,6 +102,13 @@ func (x *FeatureExplanation) ProtoReflect() protoreflect.Message {
 // Deprecated: Use FeatureExplanation.ProtoReflect.Descriptor instead.
 func (*FeatureExplanation) Descriptor() ([]byte, []int) {
 	return file_internal_proto_prediction_prediction_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *FeatureExplanation) GetShap() float64 {
+	if x != nil {
+		return x.Shap
+	}
+	return 0
 }
 
 func (x *FeatureExplanation) GetContribution() float64 {
@@ -324,10 +332,11 @@ const file_internal_proto_prediction_prediction_proto_rawDesc = "" +
 	"*internal/proto/prediction/prediction.proto\x12\n" +
 	"prediction\"/\n" +
 	"\x11PredictionRequest\x12\x1a\n" +
-	"\bfeatures\x18\x01 \x03(\x01R\bfeatures\"P\n" +
-	"\x12FeatureExplanation\x12\"\n" +
-	"\fcontribution\x18\x01 \x01(\x01R\fcontribution\x12\x16\n" +
-	"\x06impact\x18\x02 \x01(\x05R\x06impact\"\xa8\x02\n" +
+	"\bfeatures\x18\x01 \x03(\x01R\bfeatures\"d\n" +
+	"\x12FeatureExplanation\x12\x12\n" +
+	"\x04shap\x18\x01 \x01(\x01R\x04shap\x12\"\n" +
+	"\fcontribution\x18\x02 \x01(\x01R\fcontribution\x12\x16\n" +
+	"\x06impact\x18\x03 \x01(\x05R\x06impact\"\xa8\x02\n" +
 	"\x12PredictionResponse\x12\x1e\n" +
 	"\n" +
 	"prediction\x18\x01 \x01(\x01R\n" +
