@@ -13,10 +13,10 @@ import (
 )
 
 type OauthController struct {
-	userRepo *repository.UserRepository
+	userRepo repository.UserRepository
 }
 
-func NewOauthController(userRepo *repository.UserRepository) *OauthController {
+func NewOauthController(userRepo repository.UserRepository) *OauthController {
 	return &OauthController{userRepo: userRepo}
 }
 func (oc *OauthController) GoogleAuth(c *gin.Context) {

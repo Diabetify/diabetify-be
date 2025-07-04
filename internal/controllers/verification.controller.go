@@ -21,12 +21,12 @@ type VerificationRequest struct {
 }
 
 type VerificationController struct {
-	verificationRepo *repository.VerificationRepository
-	userRepo         *repository.UserRepository
+	verificationRepo repository.VerificationRepository
+	userRepo         repository.UserRepository
 	mailConfig       utils.MailConfig
 }
 
-func NewVerificationController(verificationRepo *repository.VerificationRepository, userRepo *repository.UserRepository) *VerificationController {
+func NewVerificationController(verificationRepo repository.VerificationRepository, userRepo repository.UserRepository) *VerificationController {
 	mailConfig := utils.LoadMailConfig()
 	return &VerificationController{
 		verificationRepo: verificationRepo,

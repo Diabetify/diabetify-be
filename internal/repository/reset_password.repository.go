@@ -10,27 +10,32 @@ import (
 	"gorm.io/gorm"
 )
 
-type ResetPasswordRepository struct {
+type ResetPasswordRepository interface {
+	CreateResetPassword(resetPassword *models.ResetPassword) error
+	FindByEmailAndCode(email, code string) (*models.ResetPassword, error)
+	DeleteByEmail(email string) error
+}
+type resetPasswordRepository struct {
 	db        *gorm.DB // Keep for backward compatibility
 	useShards bool     // Flag to enable/disable sharding
 }
 
-func NewResetPasswordRepository(db *gorm.DB) *ResetPasswordRepository {
-	return &ResetPasswordRepository{
+func NewResetPasswordRepository(db *gorm.DB) ResetPasswordRepository {
+	return &resetPasswordRepository{
 		db:        db,
 		useShards: db == nil, // If no db provided, use sharding
 	}
 }
 
 // NewShardedResetPasswordRepository creates a reset password repository that uses sharding
-func NewShardedResetPasswordRepository() *ResetPasswordRepository {
-	return &ResetPasswordRepository{
+func NewShardedResetPasswordRepository() ResetPasswordRepository {
+	return &resetPasswordRepository{
 		db:        nil,
 		useShards: true,
 	}
 }
 
-func (rp *ResetPasswordRepository) CreateResetPassword(resetPassword *models.ResetPassword) error {
+func (rp *resetPasswordRepository) CreateResetPassword(resetPassword *models.ResetPassword) error {
 	if rp.useShards {
 		shardKey := resetPassword.GetShardKey()
 		return database.Manager.ExecuteOnUserShard(shardKey, func(db *gorm.DB) error {
@@ -41,7 +46,7 @@ func (rp *ResetPasswordRepository) CreateResetPassword(resetPassword *models.Res
 	return rp.db.Create(resetPassword).Error
 }
 
-func (rp *ResetPasswordRepository) FindByEmailAndCode(email, code string) (*models.ResetPassword, error) {
+func (rp *resetPasswordRepository) FindByEmailAndCode(email, code string) (*models.ResetPassword, error) {
 	if rp.useShards {
 		// Use the same hash logic to find the right shard
 		tempResetPassword := &models.ResetPassword{Email: email}
@@ -91,7 +96,7 @@ func (rp *ResetPasswordRepository) FindByEmailAndCode(email, code string) (*mode
 	return &resetPassword, nil
 }
 
-func (rp *ResetPasswordRepository) DeleteByEmail(email string) error {
+func (rp *resetPasswordRepository) DeleteByEmail(email string) error {
 	if rp.useShards {
 		// Use the same hash logic to find the right shard
 		tempResetPassword := &models.ResetPassword{Email: email}

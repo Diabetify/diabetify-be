@@ -19,11 +19,11 @@ import (
 )
 
 type UserController struct {
-	repo    *repository.UserRepository
-	rp_repo *repository.ResetPasswordRepository
+	repo    repository.UserRepository
+	rp_repo repository.ResetPasswordRepository
 }
 
-func NewUserController(repo *repository.UserRepository, rp_repo *repository.ResetPasswordRepository) *UserController {
+func NewUserController(repo repository.UserRepository, rp_repo repository.ResetPasswordRepository) *UserController {
 	return &UserController{repo: repo, rp_repo: rp_repo}
 }
 
