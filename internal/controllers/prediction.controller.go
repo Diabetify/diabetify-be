@@ -984,6 +984,7 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 			"message": "Latest prediction explanation retrieved successfully",
 			"data": gin.H{
 				"explanations": factorExplanations,
+				"prediction_summary": prediction.PredictionSummary,
 			},
 		})
 		return
@@ -1069,7 +1070,10 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 		},
 	}
 
-	explanations, summary, tokenUsage, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	explanations, summary, tokenUsage, err := openaiClient.GeneratePredictionExplanation(ctx, prediction.RiskScore, factors)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",

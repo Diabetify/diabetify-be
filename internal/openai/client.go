@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,9 +14,14 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type ContentItem struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string        `json:"role"`
+	Content []ContentItem `json:"content"`
 }
 
 type ChatCompletionRequest struct {
@@ -76,7 +82,7 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-func (c *Client) GeneratePredictionExplanation(prediction float64, factors map[string]struct {
+func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction float64, factors map[string]struct {
 	Value        string
 	Shap         float64
 	Contribution float64
@@ -124,7 +130,49 @@ func (c *Client) GeneratePredictionExplanation(prediction float64, factors map[s
 		shapTable += fmt.Sprintf("| %s | %s | %.6f |\n", factor, details.Value, details.Shap)
 	}
 
-	prompt := fmt.Sprintf(`### 1. Context:
+	globalFeatureImportanceDescription := `### Global Feature Importance Analysis:
+Based on the global SHAP analysis across the entire dataset, here are the key insights about feature importance for diabetes prediction:
+
+1. **Age**: Shows the strongest impact on diabetes risk. Higher age values (shown in red/pink) consistently contribute to increased diabetes risk, with SHAP values ranging from -0.05 to +0.20. This indicates that older individuals have significantly higher diabetes risk.
+
+2. **BMI (Body Mass Index)**: The second most important feature. Higher BMI values (red/pink dots) strongly increase diabetes risk, with SHAP values ranging from -0.10 to +0.15. Lower BMI values (blue dots) tend to reduce diabetes risk.
+
+3. **Hypertension Status**: Binary feature where having hypertension (red dots) increases diabetes risk with positive SHAP values around +0.05, while not having hypertension (blue dots) clusters around zero impact.
+
+4. **Smoking Status**: Shows moderate impact with positive SHAP values for certain smoking statuses increasing diabetes risk.
+
+5. **Macrosomic Baby History**: For applicable individuals, having a history of macrosomic babies (red dots) increases diabetes risk with positive SHAP values.
+
+6. **Brinkman Index**: Smoking exposure index shows variable impact, with higher exposure generally increasing diabetes risk.
+
+7. **Cholesterol Issues**: Binary feature where having cholesterol problems contributes positively to diabetes risk.
+
+8. **Family History (Bloodline)**: Having family history of diabetes shows positive contribution to diabetes risk.
+
+9. **Physical Activity Frequency**: Shows the least impact among all features, with SHAP values clustered around zero, indicating minimal influence on diabetes prediction.
+
+The color coding represents feature values: blue indicates lower values, red/pink indicates higher values. The x-axis shows the SHAP value (impact on model output), where positive values increase diabetes risk and negative values decrease it.`
+
+	systemPrompt := `### General Request:
+Your job is to explain the contribution of each feature to this user's predicted diabetes risk.
+
+### How to Act:
+- You are acting as a **medical AI explainer** for **diabetes predictions.**
+- Address the user as "Anda".
+- All explanations **must be written in Bahasa Indonesia.**
+- Use simple, everyday language that can be easily understood by non-experts.
+- Each feature explanation **must be 2-3 sentences maximum.**
+
+### Output Format:
+The output must be a JSON object with the following structure:
+- 'summary': A summary that gives an easy-to-understand explanation of the user's diabetes prediction result based on the SHAP values.
+- An explanation for each feature's contribution in a JSON array called 'features'. Each object must have:
+    - 'feature_name': the feature name
+    - 'description': your interpreted description of this feature
+    - 'explanation': the feature's role in this prediction, explained in plain language with any relevant diabetes-specific context.
+Do not enclose the JSON in markdown code. Only return the JSON object.`
+
+	userPrompt := fmt.Sprintf(`### Context:
 - SHAP (SHapley Additive exPlanations) is a method for explaining the output of machine learning models. SHAP shows how much each feature contributes to a specific prediction.
 - The following table lists the dataset's feature names, their aliases, and descriptions:
 %s
@@ -135,29 +183,27 @@ func (c *Client) GeneratePredictionExplanation(prediction float64, factors map[s
 - The following table contains the input values and SHAP values for this specific user:
 %s
 
-### 2. General Request:
-Your job is to explain the contribution of each feature to this user's predicted diabetes risk.
-
-### 3. How to Act:
-- You are acting as a **medical AI explainer** for **diabetes predictions.**
-- Address the user as "Anda".
-- All explanations **must be written in Bahasa Indonesia.**
-- Use simple, everyday language that can be easily understood by non-experts.
-- Each feature explanation **must be 2-3 sentences maximum.**
-
-### 4. Output Format:
-The output must be a JSON object with the following structure:
-- 'summary': A summary that gives an easy-to-understand explanation of the user's diabetes prediction result based on the SHAP values.
-- An explanation for each feature's contribution in a JSON array called 'features'. Each object must have:
-    - 'feature_name': the feature name
-    - 'description': your interpreted description of this feature
-    - 'explanation': the feature's role in this prediction, explained in plain language with any relevant diabetes-specific context.
-Do not enclose the JSON in markdown code. Only return the JSON object.`, featureTable, bmiTable, shapTable)
+%s
+`, featureTable, bmiTable, shapTable, globalFeatureImportanceDescription)
 
 	messages := []ChatMessage{
 		{
-			Role:    "user",
-			Content: prompt,
+			Role: "system",
+			Content: []ContentItem{
+				{
+					Type: "text",
+					Text: systemPrompt,
+				},
+			},
+		},
+		{
+			Role: "user",
+			Content: []ContentItem{
+				{
+					Type: "text",
+					Text: userPrompt,
+				},
+			},
 		},
 	}
 
@@ -165,7 +211,7 @@ Do not enclose the JSON in markdown code. Only return the JSON object.`, feature
 		Model:       "gpt-4o",
 		Messages:    messages,
 		Temperature: 0.3,
-		MaxTokens:   5000,
+		MaxTokens:   3000,
 	}
 
 	jsonData, err := json.Marshal(req)
@@ -173,7 +219,7 @@ Do not enclose the JSON in markdown code. Only return the JSON object.`, feature
 		return nil, "", TokenUsage{}, fmt.Errorf("failed to marshal request: %v", err)
 	}
 
-	request, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
+	request, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, "", TokenUsage{}, fmt.Errorf("failed to create request: %v", err)
 	}
@@ -236,7 +282,7 @@ Do not enclose the JSON in markdown code. Only return the JSON object.`, feature
 	}
 
 	if len(explanations) == 0 {
-		return nil, "", tokenUsage, fmt.Errorf("failed to parse any explanations from the response. Raw content: %s", content)
+		return nil, "", tokenUsage, fmt.Errorf("failed to parse explanations from the response. Raw content: %s", content)
 	}
 
 	return explanations, predictionResponse.Summary, tokenUsage, nil
