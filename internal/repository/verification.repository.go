@@ -10,27 +10,33 @@ import (
 	"gorm.io/gorm"
 )
 
-type VerificationRepository struct {
+type VerificationRepository interface {
+	CreateVerification(verification *models.Verification) error
+	FindByEmail(email string) (*models.Verification, error)
+	FindByEmailAndCode(email, code string) (*models.Verification, error)
+	DeleteByEmail(email string) error
+}
+type verificationRepository struct {
 	db        *gorm.DB // Keep for backward compatibility
 	useShards bool     // Flag to enable/disable sharding
 }
 
-func NewVerificationRepository(db *gorm.DB) *VerificationRepository {
-	return &VerificationRepository{
+func NewVerificationRepository(db *gorm.DB) VerificationRepository {
+	return &verificationRepository{
 		db:        db,
 		useShards: db == nil, // If no db provided, use sharding
 	}
 }
 
 // NewShardedVerificationRepository creates a verification repository that uses sharding
-func NewShardedVerificationRepository() *VerificationRepository {
-	return &VerificationRepository{
+func NewShardedVerificationRepository() VerificationRepository {
+	return &verificationRepository{
 		db:        nil,
 		useShards: true,
 	}
 }
 
-func (vr *VerificationRepository) CreateVerification(verification *models.Verification) error {
+func (vr *verificationRepository) CreateVerification(verification *models.Verification) error {
 	if vr.useShards {
 		shardKey := verification.GetShardKey()
 		return database.Manager.ExecuteOnUserShard(shardKey, func(db *gorm.DB) error {
@@ -41,7 +47,7 @@ func (vr *VerificationRepository) CreateVerification(verification *models.Verifi
 	return vr.db.Create(verification).Error
 }
 
-func (vr *VerificationRepository) FindByEmail(email string) (*models.Verification, error) {
+func (vr *verificationRepository) FindByEmail(email string) (*models.Verification, error) {
 	if vr.useShards {
 		// Since verification might be in any shard, we need to search all shards
 		// However, we can optimize by using the same hash logic
@@ -89,7 +95,7 @@ func (vr *VerificationRepository) FindByEmail(email string) (*models.Verificatio
 	return &verification, nil
 }
 
-func (vr *VerificationRepository) FindByEmailAndCode(email, code string) (*models.Verification, error) {
+func (vr *verificationRepository) FindByEmailAndCode(email, code string) (*models.Verification, error) {
 	if vr.useShards {
 		// Use the same hash logic to find the right shard
 		tempVerification := &models.Verification{Email: email}
@@ -139,7 +145,7 @@ func (vr *VerificationRepository) FindByEmailAndCode(email, code string) (*model
 	return &verification, nil
 }
 
-func (vr *VerificationRepository) DeleteByEmail(email string) error {
+func (vr *verificationRepository) DeleteByEmail(email string) error {
 	if vr.useShards {
 		// Use the same hash logic to find the right shard
 		tempVerification := &models.Verification{Email: email}

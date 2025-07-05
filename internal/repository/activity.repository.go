@@ -23,14 +23,14 @@ type ActivityRepository interface {
 }
 
 type activityRepository struct {
-	db        *gorm.DB // Keep for backward compatibility
-	useShards bool     // Flag to enable/disable sharding
+	db        *gorm.DB
+	useShards bool // Flag to enable/disable sharding
 }
 
 func NewActivityRepository(db *gorm.DB) ActivityRepository {
 	return &activityRepository{
 		db:        db,
-		useShards: db == nil, // If no db provided, use sharding
+		useShards: db == nil,
 	}
 }
 

@@ -9,28 +9,40 @@ import (
 	"gorm.io/gorm"
 )
 
-type UserRepository struct {
+type UserRepository interface {
+	CreateUser(user *models.User) error
+	GetUserByEmail(email string) (*models.User, error)
+	GetUserByID(id uint) (*models.User, error)
+	PatchUser(id uint, data map[string]interface{}) error
+	UpdateUser(user *models.User) error
+	DeleteUser(id uint) error
+	SetUserVerified(email string) error
+	IsUserVerified(email string) (bool, error)
+	UpdateLastPredictionTime(userID uint, lastPredictionTime *time.Time) error
+}
+
+type userRepository struct {
 	db        *gorm.DB
 	useShards bool
 }
 
 // NewUserRepository creates a new user repository
 // If you pass nil for db, it will use sharding mode
-func NewUserRepository(db *gorm.DB) *UserRepository {
-	return &UserRepository{
+func NewUserRepository(db *gorm.DB) UserRepository {
+	return &userRepository{
 		db:        db,
 		useShards: db == nil, // If no db provided, use sharding
 	}
 }
 
-func NewShardedUserRepository() *UserRepository {
-	return &UserRepository{
+func NewShardedUserRepository() UserRepository {
+	return &userRepository{
 		db:        nil,
 		useShards: true,
 	}
 }
 
-func (ur *UserRepository) CreateUser(user *models.User) error {
+func (ur *userRepository) CreateUser(user *models.User) error {
 	user.Verified = false
 
 	if ur.useShards {
@@ -66,7 +78,7 @@ func (ur *UserRepository) CreateUser(user *models.User) error {
 	return ur.db.Create(user).Error
 }
 
-func (ur *UserRepository) GetUserByEmail(email string) (*models.User, error) {
+func (ur *userRepository) GetUserByEmail(email string) (*models.User, error) {
 	if ur.useShards {
 		// Email lookups require searching across all shards
 		var foundUser *models.User
@@ -95,7 +107,7 @@ func (ur *UserRepository) GetUserByEmail(email string) (*models.User, error) {
 	return &user, err
 }
 
-func (ur *UserRepository) GetUserByID(id uint) (*models.User, error) {
+func (ur *userRepository) GetUserByID(id uint) (*models.User, error) {
 	if ur.useShards {
 		var user models.User
 		err := database.Manager.ExecuteOnUserShard(int(id), func(db *gorm.DB) error {
@@ -112,7 +124,7 @@ func (ur *UserRepository) GetUserByID(id uint) (*models.User, error) {
 	return &user, err
 }
 
-func (ur *UserRepository) PatchUser(id uint, data map[string]interface{}) error {
+func (ur *userRepository) PatchUser(id uint, data map[string]interface{}) error {
 	if ur.useShards {
 		return database.Manager.ExecuteOnUserShard(int(id), func(db *gorm.DB) error {
 			var user models.User
@@ -130,7 +142,7 @@ func (ur *UserRepository) PatchUser(id uint, data map[string]interface{}) error 
 	return ur.db.Model(&user).Updates(data).Error
 }
 
-func (ur *UserRepository) UpdateUser(user *models.User) error {
+func (ur *userRepository) UpdateUser(user *models.User) error {
 	if ur.useShards {
 		return database.Manager.ExecuteOnUserShard(int(user.ID), func(db *gorm.DB) error {
 			return db.Save(user).Error
@@ -140,7 +152,7 @@ func (ur *UserRepository) UpdateUser(user *models.User) error {
 	return ur.db.Save(user).Error
 }
 
-func (ur *UserRepository) DeleteUser(id uint) error {
+func (ur *userRepository) DeleteUser(id uint) error {
 	if ur.useShards {
 		return database.Manager.ExecuteOnUserShard(int(id), func(db *gorm.DB) error {
 			return db.Delete(&models.User{}, id).Error
@@ -150,7 +162,7 @@ func (ur *UserRepository) DeleteUser(id uint) error {
 	return ur.db.Delete(&models.User{}, id).Error
 }
 
-func (ur *UserRepository) SetUserVerified(email string) error {
+func (ur *userRepository) SetUserVerified(email string) error {
 	if ur.useShards {
 		// Need to find user first to determine shard
 		user, err := ur.GetUserByEmail(email)
@@ -166,7 +178,7 @@ func (ur *UserRepository) SetUserVerified(email string) error {
 	return ur.db.Model(&models.User{}).Where("email = ?", email).Update("verified", true).Error
 }
 
-func (ur *UserRepository) IsUserVerified(email string) (bool, error) {
+func (ur *userRepository) IsUserVerified(email string) (bool, error) {
 	if ur.useShards {
 		user, err := ur.GetUserByEmail(email)
 		if err != nil {
@@ -183,7 +195,7 @@ func (ur *UserRepository) IsUserVerified(email string) (bool, error) {
 	return user.Verified, nil
 }
 
-func (ur *UserRepository) UpdateLastPredictionTime(userID uint, lastPredictionTime *time.Time) error {
+func (ur *userRepository) UpdateLastPredictionTime(userID uint, lastPredictionTime *time.Time) error {
 	if ur.useShards {
 		return database.Manager.ExecuteOnUserShard(int(userID), func(db *gorm.DB) error {
 			return db.Model(&models.User{}).Where("id = ?", userID).Update("last_prediction_at", lastPredictionTime).Error

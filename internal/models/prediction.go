@@ -60,6 +60,7 @@ type Prediction struct {
 	PhysicalActivityFrequencyContribution float64        `json:"physical_activity_frequency_contribution" example:"0.1"`
 	PhysicalActivityFrequencyImpact       float64        `json:"physical_activity_frequency_impact" example:"0.2"`
 	PhysicalActivityFrequencyExplanation  string         `gorm:"type:text" json:"physical_activity_frequency_explanation"`
+	PredictionSummary                     string         `gorm:"type:text" json:"prediction_summary" example:"This user has a moderate risk of diabetes."`
 }
 
 func (p *Prediction) GetShardKey() int {

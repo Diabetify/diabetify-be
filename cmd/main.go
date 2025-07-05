@@ -53,9 +53,9 @@ func main() {
 
 	// Initialize repositories based on sharding configuration
 	var (
-		forgotPasswordRepo *repository.ResetPasswordRepository
-		userRepo           *repository.UserRepository
-		verificationRepo   *repository.VerificationRepository
+		forgotPasswordRepo repository.ResetPasswordRepository
+		userRepo           repository.UserRepository
+		verificationRepo   repository.VerificationRepository
 		activityRepo       repository.ActivityRepository
 		profileRepo        repository.UserProfileRepository
 		predictionRepo     repository.PredictionRepository
@@ -69,7 +69,7 @@ func main() {
 		activityRepo = repository.NewShardedActivityRepository()
 		profileRepo = repository.NewShardedUserProfileRepository()
 		predictionRepo = repository.NewShardedPredictionRepository()
-		log.Println("✅ Initialized sharded repositories")
+		log.Println("Initialized sharded repositories")
 	} else {
 		// Use single database repositories
 		forgotPasswordRepo = repository.NewResetPasswordRepository(database.DB)
@@ -78,7 +78,7 @@ func main() {
 		activityRepo = repository.NewActivityRepository(database.DB)
 		profileRepo = repository.NewUserProfileRepository(database.DB)
 		predictionRepo = repository.NewPredictionRepository(database.DB)
-		log.Println("✅ Initialized single database repositories")
+		log.Println("Initialized single database repositories")
 	}
 
 	// Article repository (assuming it doesn't need sharding)
@@ -105,7 +105,7 @@ func main() {
 		log.Printf("Warning: ML service health check failed: %v", err)
 		log.Println("The application will start, but predictions will fail until ML service is available")
 	} else {
-		log.Println("✅ ML service gRPC connection established successfully")
+		log.Println("ML service gRPC connection established successfully")
 	}
 
 	// Initialize controllers
@@ -118,11 +118,11 @@ func main() {
 
 	// Updated prediction controller with all required repositories
 	predictionController := controllers.NewPredictionController(
-		predictionRepo, // Prediction repository
-		userRepo,       // User repository for getting DOB
-		profileRepo,    // Profile repository for getting user profile data
-		activityRepo,   // Activity repository for calculating Brinkman index and physical activity
-		mlClient,       // gRPC ML client
+		predictionRepo,
+		userRepo,
+		profileRepo,
+		activityRepo,
+		mlClient,
 	)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -208,14 +208,12 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("🚀 Server starting on port %s", port)
-	log.Printf("📋 API Documentation available at http://localhost:%s/swagger/index.html", port)
-	log.Printf("🔗 ML Health check: http://localhost:%s/prediction/predict/health", port)
+	log.Printf("Server starting on port %s", port)
 
 	if useSharding {
-		log.Printf("🗄️  Database Shards Health: http://localhost:%s/debug/shards", port)
+		log.Printf("Database Shards Health: http://localhost:%s/debug/shards", port)
 	} else {
-		log.Printf("🗄️  Database Health: http://localhost:%s/debug/database", port)
+		log.Printf("Database Health: http://localhost:%s/debug/database", port)
 	}
 
 	server := &http.Server{

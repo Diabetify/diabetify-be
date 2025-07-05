@@ -18,7 +18,7 @@ import (
 
 type PredictionController struct {
 	repo         repository.PredictionRepository
-	userRepo     *repository.UserRepository
+	userRepo     repository.UserRepository
 	profileRepo  repository.UserProfileRepository
 	activityRepo repository.ActivityRepository
 	mlClient     ml.MLClient
@@ -26,7 +26,7 @@ type PredictionController struct {
 
 func NewPredictionController(
 	repo repository.PredictionRepository,
-	userRepo *repository.UserRepository,
+	userRepo repository.UserRepository,
 	profileRepo repository.UserProfileRepository,
 	activityRepo repository.ActivityRepository,
 	mlClient ml.MLClient,
