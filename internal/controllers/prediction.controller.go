@@ -1069,7 +1069,7 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 		},
 	}
 
-	explanations, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
+	explanations, summary, tokenUsage, err := openaiClient.GeneratePredictionExplanation(prediction.RiskScore, factors)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -1096,6 +1096,16 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 	prediction.IsMacrosomicBabyExplanation = explanations["is_macrosomic_baby"].Explanation
 	prediction.SmokingStatusExplanation = explanations["smoking_status"].Explanation
 	prediction.PhysicalActivityFrequencyExplanation = explanations["physical_activity_frequency"].Explanation
+	prediction.PredictionSummary = summary
+
+	if err := pc.repo.UpdatePrediction(prediction); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to update prediction with explanations",
+			"error":   err.Error(),
+		})
+		return
+	}
 
 	factorExplanations := make(map[string]string)
 	for factor, exp := range explanations {
@@ -1106,7 +1116,13 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 		"status":  "success",
 		"message": "Latest prediction explanation generated successfully",
 		"data": gin.H{
-			"explanations": factorExplanations,
+			"explanations":       factorExplanations,
+			"prediction_summary": summary,
+			"token_usage": gin.H{
+				"prompt_tokens":     tokenUsage.PromptTokens,
+				"completion_tokens": tokenUsage.CompletionTokens,
+				"total_tokens":      tokenUsage.TotalTokens,
+			},
 		},
 	})
 }
