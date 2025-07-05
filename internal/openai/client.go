@@ -60,7 +60,6 @@ type PredictionExplanationResponse struct {
 
 type Feature struct {
 	FeatureName string `json:"feature_name"`
-	Description string `json:"description"`
 	Explanation string `json:"explanation"`
 }
 
@@ -90,26 +89,26 @@ func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction f
 }) (map[string]FactorExplanation, string, TokenUsage, error) {
 	featureAliases := map[string]string{
 		"age":                         "Usia",
-		"bmi":                         "BMI (Body Mass Index)",
+		"bmi":                         "Indeks Massa Tubuh (BMI)",
 		"brinkman_score":              "Indeks Brinkman",
 		"is_hypertension":             "Hipertensi",
-		"is_cholesterol":              "Kolesterol",
-		"is_bloodline":                "Riwayat Keluarga Diabetes",
-		"is_macrosomic_baby":          "Riwayat Bayi Makrosomik",
+		"is_cholesterol":              "Kolesterol Tinggi",
+		"is_bloodline":                "Riwayat Keluarga dengan Diabetes",
+		"is_macrosomic_baby":          "Riwayat Melahirkan Bayi Besar",
 		"smoking_status":              "Status Merokok",
-		"physical_activity_frequency": "Frekuensi Aktivitas Fisik",
+		"physical_activity_frequency": "Frekuensi Aktivitas Fisik Sedang",
 	}
 
 	featureDescriptions := map[string]string{
-		"age":                         "Usia pengguna dalam tahun",
-		"bmi":                         "Indeks Massa Tubuh yang dihitung dari berat dan tinggi badan",
-		"brinkman_score":              "Indeks yang menggambarkan paparan rokok sepanjang hidup",
-		"is_hypertension":             "Apakah pengguna memiliki tekanan darah tinggi",
-		"is_cholesterol":              "Apakah pengguna memiliki masalah kolesterol",
-		"is_bloodline":                "Apakah ada riwayat diabetes dalam keluarga",
-		"is_macrosomic_baby":          "Apakah pernah melahirkan bayi dengan berat > 4kg",
-		"smoking_status":              "Status merokok pengguna saat ini",
-		"physical_activity_frequency": "Seberapa sering pengguna melakukan aktivitas fisik per minggu",
+		"age":                         "The user's age in years, represented as a whole number (e.g., 50).",
+		"bmi":                         "The user's Body Mass Index (BMI), a continuous numeric value (e.g., 20.5), used to assess whether a person is underweight, normal, overweight, or obese. BMI Classifications: < 18.5 = Underweight (Kurus), 18.5-24.9 = Normal, 25.0-29.9 = Overweight (Gemuk), ≥ 30.0 = Obese (Obesitas).",
+		"brinkman_score":              "Brinkman Index measures lifetime tobacco exposure: 0 = never smoked, 1 = mild smoker, 2 = moderate smoker, 3 = heavy smoker.",
+		"is_hypertension":             "Indicates whether the user has been diagnosed with hypertension (high blood pressure): 0 = no, 1 = yes.",
+		"is_cholesterol":              "Indicates whether the user has been diagnosed with high cholesterol: 0 = no, 1 = yes.",
+		"is_bloodline":                "Indicates whether the user's parent has died due to diabetes: 0 = no, 1 = yes",
+		"is_macrosomic_baby":          "Indicates whether the user has given birth to a baby weighing more than 4 kg: 0 = no, 1 = yes, 2 = not applicable (never pregnant).",
+		"smoking_status":              "The user's smoking status: 0 = never smoked, 1 = former smoker, 2 = current smoker.",
+		"physical_activity_frequency": "The number of days per week the user performs moderate-intensity physical activities.",
 	}
 
 	featureTable := "| Feature Name | Feature Alias | Feature Description |\n|-----|-----|-----|\n"
@@ -119,12 +118,6 @@ func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction f
 		featureTable += fmt.Sprintf("| %s | %s | %s |\n", factor, alias, description)
 	}
 
-	bmiTable := "| BMI Range (kg/m²) | Classification |\n|-----|-----|\n"
-	bmiTable += "| < 18.5 | Underweight (Kurus) |\n"
-	bmiTable += "| 18.5 - 24.9 | Normal |\n"
-	bmiTable += "| 25.0 - 29.9 | Overweight (Gemuk) |\n"
-	bmiTable += "| ≥ 30.0 | Obese (Obesitas) |\n"
-
 	shapTable := "| Feature Name | Input Value | SHAP Value |\n|-----|-----|-----|\n"
 	for factor, details := range factors {
 		shapTable += fmt.Sprintf("| %s | %s | %.6f |\n", factor, details.Value, details.Shap)
@@ -132,59 +125,53 @@ func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction f
 
 	globalFeatureImportanceDescription := `### Global Feature Importance Analysis:
 Based on the global SHAP analysis across the entire dataset, here are the key insights about feature importance for diabetes prediction:
+1. **age**: This is the most significant feature. The plot clearly shows that higher age (red dots) corresponds to positive SHAP values (up to approximately +0.15), indicating a significantly higher predicted risk of diabetes. Conversely, lower age (blue dots) is associated with negative SHAP values (down to approximately -0.15), indicating a lower risk.
+2. **bmi**: Body Mass Index (BMI) is the second most influential feature. High BMI values (red dots) strongly push the prediction towards a positive diabetes outcome, with SHAP values reaching as high as +0.20. Low BMI values (blue dots) have a negative impact (down to -0.10), lowering the predicted risk.
+3. **is_hypertension**: Patients with hypertension (red dots) consistently have positive SHAP values (around +0.05), increasing their predicted diabetes risk. Those without hypertension (blue dots) show negative SHAP values (around -0.05), decreasing the risk.
+4. **smoking_status**: Being a smoker (red dots) contributes to a higher diabetes risk with positive SHAP values (up to +0.05). Non-smoking status (blue dots) has a slightly negative impact, reducing the predicted risk.
+5. **is_macrosomic_baby**: This condition (red dots) leads to positive SHAP values (up to +0.03), increasing the diabetes risk. The absence of this history (blue dots) results in a negative impact (around -0.025).
+6. **brinkman_score**: This index shows that higher values (red dots) are generally associated with positive SHAP values (up to +0.05), indicating an increased risk of diabetes. Lower values (blue dots) correspond to negative SHAP values (down to -0.05), suggesting a reduced risk.
+7. **is_cholesterol**: Patients with high cholesterol (red dots) have positive SHAP values (up to +0.03), increasing the predicted risk of diabetes. Normal cholesterol levels (blue dots) have a slight negative impact, lowering the risk.
+8. **is_bloodline**: The presence of diabetes in the bloodline (red dots) results in positive SHAP values (up to +0.05), increasing the risk. The absence of a family history (blue dots) shows a minimal negative impact on the prediction.
+7. **physical_activity_frequency**: This feature has the least impact among the top predictors. A higher frequency of physical activity (red dots) corresponds to slightly negative SHAP values (around -0.02), indicating a minor decrease in diabetes risk. Conversely, lower physical activity levels (blue dots) are associated with slightly positive SHAP values, suggesting a minor increase in risk.`
 
-1. **Age**: Shows the strongest impact on diabetes risk. Higher age values (shown in red/pink) consistently contribute to increased diabetes risk, with SHAP values ranging from -0.05 to +0.20. This indicates that older individuals have significantly higher diabetes risk.
-
-2. **BMI (Body Mass Index)**: The second most important feature. Higher BMI values (red/pink dots) strongly increase diabetes risk, with SHAP values ranging from -0.10 to +0.15. Lower BMI values (blue dots) tend to reduce diabetes risk.
-
-3. **Hypertension Status**: Binary feature where having hypertension (red dots) increases diabetes risk with positive SHAP values around +0.05, while not having hypertension (blue dots) clusters around zero impact.
-
-4. **Smoking Status**: Shows moderate impact with positive SHAP values for certain smoking statuses increasing diabetes risk.
-
-5. **Macrosomic Baby History**: For applicable individuals, having a history of macrosomic babies (red dots) increases diabetes risk with positive SHAP values.
-
-6. **Brinkman Index**: Smoking exposure index shows variable impact, with higher exposure generally increasing diabetes risk.
-
-7. **Cholesterol Issues**: Binary feature where having cholesterol problems contributes positively to diabetes risk.
-
-8. **Family History (Bloodline)**: Having family history of diabetes shows positive contribution to diabetes risk.
-
-9. **Physical Activity Frequency**: Shows the least impact among all features, with SHAP values clustered around zero, indicating minimal influence on diabetes prediction.
-
-The color coding represents feature values: blue indicates lower values, red/pink indicates higher values. The x-axis shows the SHAP value (impact on model output), where positive values increase diabetes risk and negative values decrease it.`
-
-	systemPrompt := `### General Request:
+	systemPrompt := fmt.Sprintf(`### General Request:
 Your job is to explain the contribution of each feature to this user's predicted diabetes risk.
 
 ### How to Act:
 - You are acting as a **medical AI explainer** for **diabetes predictions.**
 - Address the user as "Anda".
 - All explanations **must be written in Bahasa Indonesia.**
-- Use simple, everyday language that can be easily understood by non-experts.
-- Each feature explanation **must be 2-3 sentences maximum.**
+- Use simple, everyday language that's easy for everyone to understand, especially people who **don't have a background in medicine or technology**.
+- **Avoid using complex terms** like SHAP, XAI, or medical jargon. If such terms must be used, explain them in a way that a **regular person can easily grasp**.
+
+### Context:
+- SHAP (SHapley Additive exPlanations) is a method for explaining the output of machine learning models. SHAP shows how much each feature contributes to a specific prediction.
+
+### Feature Reference:
+- The following table lists the features used in the diabetes prediction model, along with their aliases and descriptions:
+%s
+
+%s
 
 ### Output Format:
 The output must be a JSON object with the following structure:
 - 'summary': A summary that gives an easy-to-understand explanation of the user's diabetes prediction result based on the SHAP values.
 - An explanation for each feature's contribution in a JSON array called 'features'. Each object must have:
     - 'feature_name': the feature name
-    - 'description': your interpreted description of this feature
-    - 'explanation': the feature's role in this prediction, explained in plain language with any relevant diabetes-specific context.
-Do not enclose the JSON in markdown code. Only return the JSON object.`
+    - 'explanation': the feature's role in this prediction, explained in plain language with any relevant diabetes-specific context. Each explanation must be 2 sentences long.
+- Sentence Structure Breakdown (Per Explanation):
+		- Sentence 1: States the condition and its influence on diabetes risk (positive or negative). It explains whether a certain factor increases or decreases the person's diabetes risk based on their data.
+		- Sentence 2: Provides general background or reasoning about how or why that factor affects diabetes risk. This sentence gives a simple explanation or context that connects the factor to diabetes risk based on Global Feature Importance Analysis.
+- This is an example of a good feature explanation: '(Value) yang (adjective) secara (adverb) (verb) risiko diabetes Anda. Risiko diabetes cenderung (verb) seiring (noun phrase) (this factor).'
 
-	userPrompt := fmt.Sprintf(`### Context:
-- SHAP (SHapley Additive exPlanations) is a method for explaining the output of machine learning models. SHAP shows how much each feature contributes to a specific prediction.
-- The following table lists the dataset's feature names, their aliases, and descriptions:
-%s
+Do not enclose the JSON in markdown code. Only return the JSON object.`, featureTable, globalFeatureImportanceDescription)
 
-- The following table is a BMI classification reference:
-%s
-
-- The following table contains the input values and SHAP values for this specific user:
-%s
+	userPrompt := fmt.Sprintf(`Please analyze this user's diabetes prediction with the following SHAP values:
 
 %s
-`, featureTable, bmiTable, shapTable, globalFeatureImportanceDescription)
+
+Provide explanations for each feature's contribution to the prediction.`, shapTable)
 
 	messages := []ChatMessage{
 		{
