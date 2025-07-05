@@ -122,23 +122,23 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	}
 
 	// Helper function to safely extract explanation values
-	getExplanation := func(key string) (float64, float64) {
+	getExplanation := func(key string) (float64, float64, float64) {
 		if exp, exists := response.Explanation[key]; exists {
-			return exp.Contribution, float64(exp.Impact)
+			return exp.Shap, exp.Contribution, float64(exp.Impact)
 		}
-		return 0.0, 0.0
+		return 0.0, 0.0, 0.0
 	}
 
 	// Extract explanations safely
-	ageContribution, ageImpact := getExplanation("age")
-	bmiContribution, bmiImpact := getExplanation("BMI")
-	brinkmanContribution, brinkmanImpact := getExplanation("brinkman_index")
-	hypertensionContribution, hypertensionImpact := getExplanation("is_hypertension")
-	cholesterolContribution, cholesterolImpact := getExplanation("is_cholesterol")
-	bloodlineContribution, bloodlineImpact := getExplanation("is_bloodline")
-	macrosomicContribution, macrosomicImpact := getExplanation("is_macrosomic_baby")
-	smokingContribution, smokingImpact := getExplanation("smoking_status")
-	activityContribution, activityImpact := getExplanation("moderate_physical_activity_frequency")
+	ageShap, ageContribution, ageImpact := getExplanation("age")
+	bmiShap, bmiContribution, bmiImpact := getExplanation("BMI")
+	brinkmanShap, brinkmanContribution, brinkmanImpact := getExplanation("brinkman_index")
+	hypertensionShap, hypertensionContribution, hypertensionImpact := getExplanation("is_hypertension")
+	cholesterolShap, cholesterolContribution, cholesterolImpact := getExplanation("is_cholesterol")
+	bloodlineShap, bloodlineContribution, bloodlineImpact := getExplanation("is_bloodline")
+	macrosomicShap, macrosomicContribution, macrosomicImpact := getExplanation("is_macrosomic_baby")
+	smokingShap, smokingContribution, smokingImpact := getExplanation("smoking_status")
+	activityShap, activityContribution, activityImpact := getExplanation("moderate_physical_activity_frequency")
 
 	// Create a new prediction record for database
 	prediction := &models.Prediction{
@@ -146,38 +146,47 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		RiskScore: response.Prediction,
 
 		Age:             featureInfo["age"].(int),
+		AgeShap:         ageShap,
 		AgeContribution: ageContribution,
 		AgeImpact:       ageImpact,
 
 		BMI:             featureInfo["bmi"].(float64),
+		BMIShap:         bmiShap,
 		BMIContribution: bmiContribution,
 		BMIImpact:       bmiImpact,
 
 		BrinkmanScore:             featureInfo["brinkman_score"].(int),
+		BrinkmanScoreShap:         brinkmanShap,
 		BrinkmanScoreContribution: brinkmanContribution,
 		BrinkmanScoreImpact:       brinkmanImpact,
 
 		IsHypertension:             featureInfo["is_hypertension"].(bool),
+		IsHypertensionShap:         hypertensionShap,
 		IsHypertensionContribution: hypertensionContribution,
 		IsHypertensionImpact:       hypertensionImpact,
 
 		IsCholesterol:             featureInfo["is_cholesterol"].(bool),
+		IsCholesterolShap:         cholesterolShap,
 		IsCholesterolContribution: cholesterolContribution,
 		IsCholesterolImpact:       cholesterolImpact,
 
 		IsBloodline:             featureInfo["is_bloodline"].(bool),
+		IsBloodlineShap:         bloodlineShap,
 		IsBloodlineContribution: bloodlineContribution,
 		IsBloodlineImpact:       bloodlineImpact,
 
 		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(int),
+		IsMacrosomicBabyShap:         macrosomicShap,
 		IsMacrosomicBabyContribution: macrosomicContribution,
 		IsMacrosomicBabyImpact:       macrosomicImpact,
 
 		SmokingStatus:             featureInfo["smoking_status"].(int),
+		SmokingStatusShap:         smokingShap,
 		SmokingStatusContribution: smokingContribution,
 		SmokingStatusImpact:       smokingImpact,
 
 		PhysicalActivityFrequency:             featureInfo["physical_activity_frequency"].(int),
+		PhysicalActivityFrequencyShap:         activityShap,
 		PhysicalActivityFrequencyContribution: activityContribution,
 		PhysicalActivityFrequencyImpact:       activityImpact,
 	}
@@ -369,6 +378,7 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		isCholesterol             bool
 		brinkmanIndex             int
 		avgSmokeCount             int
+		avgCigarettesPerDay       int
 	)
 
 	if input == nil {
@@ -403,10 +413,12 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		}
 
 		// Calculate Brinkman index from smoking activities
-		brinkmanIndex, err = pc.calculateBrinkmanIndex(userID, profile)
+		brinkmanIndex, avgCigarettesPerDay, err = pc.calculateBrinkmanIndex(userID, profile)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
 		}
+
+		avgSmokeCount = avgCigarettesPerDay
 	} else {
 		smokingStatus = input.SmokingStatus
 		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
@@ -509,7 +521,7 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 }
 
 // calculateBrinkmanIndex calculates Brinkman index from smoking activities
-func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *models.UserProfile) (int, error) {
+func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *models.UserProfile) (int, int, error) {
 	// Get smoking activities from last 14 days
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -14)
@@ -520,11 +532,11 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *mod
 	if profile.CreatedAt.Before(startDate) {
 		activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
 		if err != nil {
-			return 0.0, err
+			return 0.0, 0.0, err
 		}
 
 		if len(activities) == 0 {
-			return 0.0, nil
+			return 0.0, 0.0, nil
 		}
 		totalCigarettes := 0
 		for _, activity := range activities {
@@ -562,7 +574,7 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *mod
 		category = 3
 	}
 
-	return category, nil
+	return category, int(avgCigarettesPerDay), nil
 }
 
 // calculatePhysicalActivityFrequency calculates sum workout frequency per 1 week
@@ -997,51 +1009,61 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 
 	factors := map[string]struct {
 		Value        string
+		Shap         float64
 		Contribution float64
 		Impact       float64
 	}{
 		"age": {
 			Value:        fmt.Sprintf("%d years", prediction.Age),
+			Shap:         prediction.AgeShap,
 			Contribution: prediction.AgeContribution,
 			Impact:       prediction.AgeImpact,
 		},
 		"bmi": {
 			Value:        fmt.Sprintf("%.1f", prediction.BMI),
+			Shap:         prediction.BMIShap,
 			Contribution: prediction.BMIContribution,
 			Impact:       prediction.BMIImpact,
 		},
 		"brinkman_score": {
 			Value:        fmt.Sprintf("%.1f", prediction.BrinkmanScore),
+			Shap:         prediction.BrinkmanScoreShap,
 			Contribution: prediction.BrinkmanScoreContribution,
 			Impact:       prediction.BrinkmanScoreImpact,
 		},
 		"is_hypertension": {
 			Value:        fmt.Sprintf("%v", prediction.IsHypertension),
+			Shap:         prediction.IsHypertensionShap,
 			Contribution: prediction.IsHypertensionContribution,
 			Impact:       prediction.IsHypertensionImpact,
 		},
 		"is_cholesterol": {
 			Value:        fmt.Sprintf("%v", prediction.IsCholesterol),
+			Shap:         prediction.IsCholesterolShap,
 			Contribution: prediction.IsCholesterolContribution,
 			Impact:       prediction.IsCholesterolImpact,
 		},
 		"is_bloodline": {
 			Value:        fmt.Sprintf("%v", prediction.IsBloodline),
+			Shap:         prediction.IsBloodlineShap,
 			Contribution: prediction.IsBloodlineContribution,
 			Impact:       prediction.IsBloodlineImpact,
 		},
 		"is_macrosomic_baby": {
 			Value:        fmt.Sprintf("%v", prediction.IsMacrosomicBaby),
+			Shap:         prediction.IsMacrosomicBabyShap,
 			Contribution: prediction.IsMacrosomicBabyContribution,
 			Impact:       prediction.IsMacrosomicBabyImpact,
 		},
 		"smoking_status": {
 			Value:        fmt.Sprintf("%v", prediction.SmokingStatus),
+			Shap:         prediction.SmokingStatusShap,
 			Contribution: prediction.SmokingStatusContribution,
 			Impact:       prediction.SmokingStatusImpact,
 		},
 		"physical_activity_frequency": {
 			Value:        fmt.Sprintf("%d times", prediction.PhysicalActivityFrequency),
+			Shap:         prediction.PhysicalActivityFrequencyShap,
 			Contribution: prediction.PhysicalActivityFrequencyContribution,
 			Impact:       prediction.PhysicalActivityFrequencyImpact,
 		},

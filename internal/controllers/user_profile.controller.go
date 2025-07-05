@@ -3,7 +3,6 @@ package controllers
 import (
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
-	"math"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -99,7 +98,6 @@ func (pc *UserProfileController) CreateUserProfile(c *gin.Context) {
 	if profile.Weight != nil && profile.Height != nil && *profile.Height > 0 {
 		heightInMeters := float64(*profile.Height) / 100.0
 		bmi := float64(*profile.Weight) / (heightInMeters * heightInMeters)
-		bmi = math.Round(bmi*10) / 10
 		profile.BMI = &bmi
 	}
 
@@ -174,7 +172,6 @@ func (pc *UserProfileController) UpdateUserProfile(c *gin.Context) {
 	if updatedProfile.Weight != nil && updatedProfile.Height != nil && *updatedProfile.Height > 0 {
 		heightInMeters := float64(*updatedProfile.Height) / 100.0
 		bmi := float64(*updatedProfile.Weight) / (heightInMeters * heightInMeters)
-		bmi = math.Round(bmi*10) / 10 // Round to 1 decimal place
 		updatedProfile.BMI = &bmi
 	}
 
@@ -310,7 +307,6 @@ func (pc *UserProfileController) PatchUserProfile(c *gin.Context) {
 	if recalculateBMI && height > 0 {
 		heightInMeters := height / 100.0
 		bmi := weight / (heightInMeters * heightInMeters)
-		bmi = math.Round(bmi*10) / 10
 		bmiValue := float64(bmi)
 		patchData["bmi"] = bmiValue
 	}

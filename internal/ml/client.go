@@ -63,12 +63,15 @@ func (c *grpcMLClient) Predict(ctx context.Context, features []float64) (*models
 		return nil, fmt.Errorf("gRPC prediction call failed: %w", err)
 	}
 
+	fmt.Println(resp)
+
 	explanationItems := make(map[string]models.ExplanationItem)
 
 	if resp.Explanation != nil {
 		for featureName, featureExplanation := range resp.Explanation {
 			if featureExplanation != nil {
 				explanationItems[featureName] = models.ExplanationItem{
+					Shap:         featureExplanation.Shap,
 					Contribution: featureExplanation.Contribution,
 					Impact:       int(featureExplanation.Impact),
 				}

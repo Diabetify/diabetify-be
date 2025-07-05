@@ -38,6 +38,7 @@ type FactorExplanation struct {
 	Factor       string  `json:"factor"`
 	Value        string  `json:"value"`
 	Impact       string  `json:"impact"`
+	Shap         float64 `json:"shap"`
 	Contribution float64 `json:"contribution"`
 	Explanation  string  `json:"explanation"`
 }
@@ -56,6 +57,7 @@ func NewClient() (*Client, error) {
 
 func (c *Client) GeneratePredictionExplanation(prediction float64, factors map[string]struct {
 	Value        string
+	Shap         float64
 	Contribution float64
 	Impact       float64
 }) (map[string]FactorExplanation, error) {
