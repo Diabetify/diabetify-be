@@ -431,6 +431,12 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 			yearsOfSmoking = *profile.YearOfSmoking
 		}
 
+		if profile.YearOfStopSmoking != nil {
+			yearsOfSmoking = *profile.YearOfStopSmoking - yearsOfSmoking
+		} else {
+			yearsOfSmoking = time.Now().Year() - yearsOfSmoking
+		}
+
 		avgSmokeCount = 0
 		if input.AvgSmokeCount != 0 {
 			avgSmokeCount = input.AvgSmokeCount
@@ -542,20 +548,21 @@ func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *mod
 		for _, activity := range activities {
 			totalCigarettes += activity.Value
 		}
-
-		avgCigarettesPerDay = float64(totalCigarettes) / 14.0 // Average over 14 days
+		avgCigarettesPerDay = float64(totalCigarettes) / 14.0
 	} else if profile.SmokeCount != nil {
 		avgCigarettesPerDay = float64(*profile.SmokeCount)
 	}
 
-	// // Get estimated years of smoking from user profile
-	// profile, err := pc.profileRepo.FindByUserID(userID)
-	// if err != nil {
-	// 	return 0.0, fmt.Errorf("failed to get user profile: %v", err)
-	// }
+	// Get estimated years of smoking from user profile
 	estimatedYears := 0
 	if profile.YearOfSmoking != nil {
 		estimatedYears = *profile.YearOfSmoking
+	}
+
+	if profile.YearOfStopSmoking != nil {
+		estimatedYears = *profile.YearOfStopSmoking - estimatedYears
+	} else {
+		estimatedYears = time.Now().Year() - estimatedYears
 	}
 
 	// Brinkman Index = cigarettes per day × years of smoking
@@ -983,7 +990,7 @@ func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 			"status":  "success",
 			"message": "Latest prediction explanation retrieved successfully",
 			"data": gin.H{
-				"explanations": factorExplanations,
+				"explanations":       factorExplanations,
 				"prediction_summary": prediction.PredictionSummary,
 			},
 		})
