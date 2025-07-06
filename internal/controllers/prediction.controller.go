@@ -378,7 +378,6 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		isCholesterol             bool
 		brinkmanIndex             int
 		avgSmokeCount             int
-		avgCigarettesPerDay       int
 	)
 
 	if input == nil {
@@ -411,48 +410,22 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
 		}
-
-		// Calculate Brinkman index from smoking activities
-		brinkmanIndex, avgCigarettesPerDay, err = pc.calculateBrinkmanIndex(userID, profile)
+		// Calculate average cigarettes per day
+		brinkmanIndex, err = calculateBrinkmanIndex(user, profile, *profile.SmokeCount)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
+			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v",
+				err)
 		}
-
-		avgSmokeCount = avgCigarettesPerDay
+		avgSmokeCount = *profile.SmokeCount
 	} else {
 		smokingStatus = input.SmokingStatus
 		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
 		isHypertension = input.IsHypertension
 		physicalActivityFrequency = input.PhysicalActivityFrequency
 		isCholesterol = input.IsCholesterol
-
-		yearsOfSmoking := 0
-		if profile.YearOfSmoking != nil {
-			yearsOfSmoking = *profile.YearOfSmoking
-		}
-
-		if profile.YearOfStopSmoking != nil {
-			yearsOfSmoking = *profile.YearOfStopSmoking - yearsOfSmoking
-		} else {
-			yearsOfSmoking = time.Now().Year() - yearsOfSmoking
-		}
-
-		avgSmokeCount = 0
-		if input.AvgSmokeCount != 0 {
-			avgSmokeCount = input.AvgSmokeCount
-		}
-
-		brinkmanIndex = yearsOfSmoking * avgSmokeCount
-
-		switch {
-		case brinkmanIndex <= 0:
-			brinkmanIndex = 0
-		case brinkmanIndex < 200:
-			brinkmanIndex = 1
-		case brinkmanIndex < 600:
-			brinkmanIndex = 2
-		default:
-			brinkmanIndex = 3
+		brinkmanIndex, err = calculateBrinkmanIndex(user, profile, input.AvgSmokeCount)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
 		}
 	}
 
@@ -526,62 +499,54 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 	return 0, nil
 }
 
-// calculateBrinkmanIndex calculates Brinkman index from smoking activities
-func (pc *PredictionController) calculateBrinkmanIndex(userID uint, profile *models.UserProfile) (int, int, error) {
-	// Get smoking activities from last 14 days
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -14)
+func calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
+	now := time.Now()
 
-	var avgCigarettesPerDay float64
-
-	// Calculate average cigarettes per day
-	if profile.CreatedAt.Before(startDate) {
-		activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
-		if err != nil {
-			return 0.0, 0.0, err
-		}
-
-		if len(activities) == 0 {
-			return 0.0, 0.0, nil
-		}
-		totalCigarettes := 0
-		for _, activity := range activities {
-			totalCigarettes += activity.Value
-		}
-		avgCigarettesPerDay = float64(totalCigarettes) / 14.0
-	} else if profile.SmokeCount != nil {
-		avgCigarettesPerDay = float64(*profile.SmokeCount)
+	ageOfSmoking := 0
+	if profile.AgeOfSmoking != nil {
+		ageOfSmoking = *profile.AgeOfSmoking
 	}
 
-	// Get estimated years of smoking from user profile
-	estimatedYears := 0
-	if profile.YearOfSmoking != nil {
-		estimatedYears = *profile.YearOfSmoking
-	}
+	yearsOfSmoking := 0
 
-	if profile.YearOfStopSmoking != nil {
-		estimatedYears = *profile.YearOfStopSmoking - estimatedYears
+	if profile.AgeOfStopSmoking != nil {
+		yearsOfSmoking = *profile.AgeOfStopSmoking - ageOfSmoking
 	} else {
-		estimatedYears = time.Now().Year() - estimatedYears
+		if user.DOB == nil {
+			return 0, fmt.Errorf("date of birth is required")
+		}
+
+		dob, err := time.Parse("2006-01-02", *user.DOB)
+		if err != nil {
+			return 0, fmt.Errorf("invalid date of birth format: %v", err)
+		}
+
+		// Calculate current age
+		age := now.Year() - dob.Year()
+		if now.Month() < dob.Month() || (now.Month() == dob.Month() && now.Day() < dob.Day()) {
+			age--
+		}
+
+		yearsOfSmoking = age - ageOfSmoking
 	}
 
-	// Brinkman Index = cigarettes per day × years of smoking
-	brinkmanIndex := avgCigarettesPerDay * float64(estimatedYears)
-	brinkmanIndex = math.Round(brinkmanIndex*10) / 10
+	// Ensure non-negative years of smoking
+	if yearsOfSmoking < 0 {
+		yearsOfSmoking = 0
+	}
 
-	var category int
+	brinkmanIndex := yearsOfSmoking * avgSmokeCount
+
 	switch {
 	case brinkmanIndex <= 0:
-		category = 0
+		return 0, nil
 	case brinkmanIndex < 200:
-		category = 1
+		return 1, nil
 	case brinkmanIndex < 600:
-		category = 2
+		return 2, nil
 	default:
-		category = 3
+		return 3, nil
 	}
-
-	return category, int(avgCigarettesPerDay), nil
 }
 
 // calculatePhysicalActivityFrequency calculates sum workout frequency per 1 week
