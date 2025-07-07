@@ -42,6 +42,7 @@ func NewPredictionController(
 
 type WhatIfInput struct {
 	SmokingStatus             int     `json:"smoking_status" binding:"oneof=0 1 2"`
+	YearsOfSmoking            int     `json:"years_of_smoking" binding:"min=0"`
 	AvgSmokeCount             int     `json:"avg_smoke_count" binding:"min=0"`
 	Weight                    float64 `json:"weight" binding:"min=1"`
 	IsHypertension            bool    `json:"is_hypertension"`
@@ -411,10 +412,16 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 			return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
 		}
 		// Calculate average cigarettes per day
-		brinkmanIndex, err = calculateBrinkmanIndex(user, profile, *profile.SmokeCount)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v",
-				err)
+		bIndex := input.AvgSmokeCount * input.YearsOfSmoking
+		switch {
+		case bIndex <= 0:
+			brinkmanIndex = 0
+		case bIndex < 200:
+			brinkmanIndex = 1
+		case bIndex < 600:
+			brinkmanIndex = 2
+		default:
+			brinkmanIndex = 3
 		}
 		avgSmokeCount = *profile.SmokeCount
 	} else {
