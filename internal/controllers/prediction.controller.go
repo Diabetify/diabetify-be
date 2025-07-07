@@ -466,9 +466,58 @@ func boolToFloat(b bool) float64 {
 	return 0.0
 }
 
-// calculateSmokingStatus determines smoking status based on activity data (8 weeks)
-// Returns: 0 = never smoked, 1 = used to smoke (>8 weeks ago), 2 = current smoker (within 8 weeks)
+// calculateSmokingStatus determines smoking status based on profile data and activity data (8 weeks)
+// Returns: 0 = never smoked, 1 = used to smoke, 2 = current smoker
 func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error) {
+	// Get user profile
+	profile, err := pc.profileRepo.FindByUserID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to retrieve user profile: %v", err)
+	}
+
+	// Get user data for age calculation
+	user, err := pc.userRepo.GetUserByID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to retrieve user data: %v", err)
+	}
+
+	// Calculate current age
+	var currentAge int
+	if user.DOB != nil && *user.DOB != "" {
+		// Try different date formats as PostgreSQL might return different formats
+		var dobTime time.Time
+		var err error
+
+		// Common PostgreSQL timestamp formats
+		formats := []string{
+			"2006-01-02T15:04:05Z", // ISO 8601 with timezone
+			"2006-01-02T15:04:05",  // ISO 8601 without timezone
+			"2006-01-02 15:04:05",  // PostgreSQL default format
+			"2006-01-02",           // Date only
+		}
+
+		for _, format := range formats {
+			dobTime, err = time.Parse(format, *user.DOB)
+			if err == nil {
+				break
+			}
+		}
+
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse DOB: %v", err)
+		}
+
+		now := time.Now()
+		currentAge = now.Year() - dobTime.Year()
+
+		// Adjust if birthday hasn't occurred this year
+		if now.Month() < dobTime.Month() || (now.Month() == dobTime.Month() && now.Day() < dobTime.Day()) {
+			currentAge--
+		}
+	} else {
+		return 0, fmt.Errorf("user DOB is required for age calculation")
+	}
+
 	// Get smoking activities from last 8 weeks
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -56)
@@ -478,27 +527,53 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 		return 0, err
 	}
 
-	// If user has smoking activities in last 8 weeks = current smoker
-	if len(recentActivities) > 0 {
+	// Check if user never smoked (case 0)
+	if (profile.AgeOfSmoking == nil || *profile.AgeOfSmoking == 0) && len(recentActivities) == 0 {
+		return 0, nil
+	}
+
+	// Check if user is current smoker (case 2)
+	// Case 2a: Profile indicates current smoker (no stop age or stop age is 0)
+	if profile.AgeOfSmoking != nil && *profile.AgeOfSmoking != 0 && (profile.AgeOfStopSmoking == nil || *profile.AgeOfStopSmoking == 0) {
+		// Update smoking status to 2 in profile
+		err = pc.profileRepo.Patch(userID, map[string]interface{}{
+			"smoking": 2,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("failed to update smoking status: %v", err)
+		}
 		return 2, nil
 	}
 
-	// Check if user has any smoking activities before 8 weeks ago
-	historicalStartDate := endDate.AddDate(-10, 0, 0) // Check last 10 years
-	allActivities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", historicalStartDate, startDate)
-	if err != nil {
-		return 0, err
+	// Case 2b: Even if stopped smoking according to profile, but has recent activities
+	if len(recentActivities) > 0 {
+		// Update smoking status to 2 in profile
+		err = pc.profileRepo.Patch(userID, map[string]interface{}{
+			"smoking": 2,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("failed to update smoking status: %v", err)
+		}
+		return 2, nil
 	}
 
-	// If user has smoking activities but not in recent 8 weeks = pernah merokok
-	if len(allActivities) > 0 {
+	// Check if user used to smoke (case 1)
+	if profile.AgeOfSmoking != nil && *profile.AgeOfSmoking != 0 &&
+		profile.AgeOfStopSmoking != nil && *profile.AgeOfStopSmoking != 0 &&
+		currentAge > *profile.AgeOfStopSmoking {
+		// Update smoking status to 1 in profile
+		err = pc.profileRepo.Patch(userID, map[string]interface{}{
+			"smoking": 1,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("failed to update smoking status: %v", err)
+		}
 		return 1, nil
 	}
 
-	// No smoking activities found = never smoked
+	// Default case: never smoked
 	return 0, nil
 }
-
 func calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
 	now := time.Now()
 
