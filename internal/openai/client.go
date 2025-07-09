@@ -101,7 +101,7 @@ func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction f
 
 	featureDescriptions := map[string]string{
 		"age":                         "The user's age in years, represented as a whole number (e.g., 50).",
-		"bmi":                         "The user's Body Mass Index (BMI), a continuous numeric value (e.g., 20.5), used to assess whether a person is underweight, normal, overweight, or obese. BMI Classifications: < 18.5 = Underweight (Kurus), 18.5-24.9 = Normal, 25.0-29.9 = Overweight (Gemuk), ≥ 30.0 = Obese (Obesitas).",
+		"bmi":                         "The user's Body Mass Index (BMI), a continuous numeric value (e.g., 20.5), used to assess weight status based on Asian population classifications. BMI Classifications: < 18.5 = Underweight (Kurus), 18.5 - 22.9 = Normal, 23.0 - 24.9 = Overweight (Beresiko Obesitas), 25.0 - 29.9 = Obese I (Obesitas I), ≥ 30.0 = Obese II (Obesitas II).",
 		"brinkman_score":              "Brinkman Index measures lifetime tobacco exposure: 0 = never smoked, 1 = mild smoker, 2 = moderate smoker, 3 = heavy smoker.",
 		"is_hypertension":             "Indicates whether the user has been diagnosed with hypertension (high blood pressure): 0 = no, 1 = yes.",
 		"is_cholesterol":              "Indicates whether the user has been diagnosed with high cholesterol: 0 = no, 1 = yes.",
