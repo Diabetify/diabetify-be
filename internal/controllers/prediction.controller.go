@@ -212,6 +212,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		})
 		return
 	}
+
 	// Return comprehensive response
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
@@ -382,6 +383,8 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 	)
 
 	if input == nil {
+		// Normal prediction using profile data
+
 		// Check BMI
 		if profile.BMI == nil {
 			return nil, nil, fmt.Errorf("BMI is required but not found")
@@ -411,25 +414,28 @@ func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, 
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
 		}
-		// Calculate average cigarettes per day
-		bIndex := input.AvgSmokeCount * input.YearsOfSmoking
-		switch {
-		case bIndex <= 0:
+
+		// Calculate Brinkman index using profile data
+		if profile.SmokeCount != nil {
+			avgSmokeCount = *profile.SmokeCount
+			brinkmanIndex, err = calculateBrinkmanIndex(user, profile, avgSmokeCount)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
+			}
+		} else {
+			avgSmokeCount = 0
 			brinkmanIndex = 0
-		case bIndex < 200:
-			brinkmanIndex = 1
-		case bIndex < 600:
-			brinkmanIndex = 2
-		default:
-			brinkmanIndex = 3
 		}
-		avgSmokeCount = *profile.SmokeCount
+
 	} else {
+		// What-if prediction using custom input
 		smokingStatus = input.SmokingStatus
 		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
 		isHypertension = input.IsHypertension
 		physicalActivityFrequency = input.PhysicalActivityFrequency
 		isCholesterol = input.IsCholesterol
+		avgSmokeCount = input.AvgSmokeCount
+
 		brinkmanIndex, err = calculateBrinkmanIndex(user, profile, input.AvgSmokeCount)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
@@ -581,6 +587,7 @@ func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error)
 	// Default case: never smoked
 	return 0, nil
 }
+
 func calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
 	now := time.Now()
 
@@ -644,7 +651,7 @@ func (pc *PredictionController) calculatePhysicalActivityFrequency(userID uint, 
 			return 0, err
 		}
 
-		totalFrequency := 0
+		totalFrequency = 0
 		for _, activity := range activities {
 			totalFrequency += activity.Value
 		}
