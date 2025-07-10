@@ -313,7 +313,7 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 	req := ChatCompletionRequest{
 		Model:       "gpt-4o",
 		Messages:    messages,
-		Temperature: 0.2,
+		Temperature: 0.3,
 		MaxTokens:   3000,
 	}
 
