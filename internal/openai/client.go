@@ -146,6 +146,17 @@ func getFeatureDefinitions() map[string]FeatureInfo {
 	}
 }
 
+func getAliasToFeatureMapping() map[string]string {
+	featureDefinitions := getFeatureDefinitions()
+	aliasToFeature := make(map[string]string)
+	
+	for featureName, info := range featureDefinitions {
+		aliasToFeature[info.Alias] = featureName
+	}
+	
+	return aliasToFeature
+}
+
 func buildFeatureTable(features map[string]FeatureInfo, factorKeys []string) string {
 	var table strings.Builder
 	table.WriteString("| Feature Name | Feature Alias | Feature Description |\n")
@@ -205,6 +216,7 @@ func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction f
 }) (map[string]FactorExplanation, string, TokenUsage, error) {
 	
 	featureDefinitions := getFeatureDefinitions()
+	aliasToFeature := getAliasToFeatureMapping()
 	
 	factorKeys := make([]string, 0, len(factors))
 	for factor := range factors {
@@ -249,7 +261,7 @@ Your job is to explain how each feature affects the user's predicted diabetes ri
 The output must be a JSON object with the following structure:
 - 'summary': A 2-sentence summary that clearly explains the user's diabetes prediction based on SHAP values.
 - 'features': An array with each feature's explanation. Each object must include:
-    - 'feature_name': The feature's name.
+    - 'feature_name': The feature's name (use the original feature name, not the alias).
     - 'explanation': The feature's role in this prediction, explained in plain, diabetes-relevant language (2 sentences).
 Do not enclose the JSON in markdown code. Only return the JSON object.
 
@@ -264,7 +276,11 @@ Output: "Usia Anda yang menengah (45 tahun) secara moderat meningkatkan risiko d
 
 ### Sentence Structure for Each Explanation:
 - Sentence 1: State the user's specific value for this feature and whether it increases or decreases their diabetes risk based on the SHAP value direction and magnitude.
-- Sentence 2: Explain the general medical relationship between this feature and diabetes risk in simple terms.
+- Sentence 2: Briefly explain the general medical relationship between this feature and diabetes risk in simple terms.
+
+### IMPORTANT: 
+- Use the original feature names (like "age", "bmi", "is_hypertension") in the "feature_name" field, NOT the aliases.
+- The aliases are only for display purposes in the explanation text.
 `, featureTable, globalFeatureImportanceDescription)
 
 	userPrompt := fmt.Sprintf(`Please analyze this user's diabetes prediction with the following SHAP values:
@@ -297,7 +313,7 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 	req := ChatCompletionRequest{
 		Model:       "gpt-4o",
 		Messages:    messages,
-		Temperature: 0.3,
+		Temperature: 0.2,
 		MaxTokens:   3000,
 	}
 
@@ -356,9 +372,32 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 
 	explanations := make(map[string]FactorExplanation)
 	for _, feature := range predictionResponse.Features {
-		if details, ok := factors[feature.FeatureName]; ok {
-			explanations[feature.FeatureName] = FactorExplanation{
-				Factor:       feature.FeatureName,
+		var actualFeatureName string
+		var details struct {
+			Value        string
+			Shap         float64
+			Contribution float64
+			Impact       float64
+		}
+		var found bool
+		
+		if factorDetails, ok := factors[feature.FeatureName]; ok {
+			actualFeatureName = feature.FeatureName
+			details = factorDetails
+			found = true
+		} else {
+			if mappedFeatureName, aliasExists := aliasToFeature[feature.FeatureName]; aliasExists {
+				if factorDetails, ok := factors[mappedFeatureName]; ok {
+					actualFeatureName = mappedFeatureName
+					details = factorDetails
+					found = true
+				}
+			}
+		}
+		
+		if found {
+			explanations[actualFeatureName] = FactorExplanation{
+				Factor:       actualFeatureName,
 				Value:        details.Value,
 				Impact:       fmt.Sprintf("%.6f", details.Impact),
 				Shap:         details.Shap,
