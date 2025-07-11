@@ -105,3 +105,25 @@ type UpdateModelResponse struct {
 	ElapsedTime float64   `json:"elapsed_time"`
 	Timestamp   time.Time `json:"timestamp"`
 }
+
+type JobProgressUpdate struct {
+	JobID    string `json:"job_id"`
+	Status   string `json:"status"`
+	Progress int    `json:"progress"`
+	Step     string `json:"step"`
+	Message  string `json:"message,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+type AsyncPredictionResponse struct {
+	JobID          string      `json:"job_id"`
+	Status         string      `json:"status"`
+	Progress       int         `json:"progress"`
+	Step           string      `json:"step"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	CompletedAt    *time.Time  `json:"completed_at,omitempty"`
+	ProcessingTime *float64    `json:"processing_time,omitempty"` // in seconds
+	Prediction     *Prediction `json:"prediction,omitempty"`
+	Error          string      `json:"error,omitempty"`
+}

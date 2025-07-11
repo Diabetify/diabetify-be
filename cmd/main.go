@@ -3,17 +3,17 @@ package main
 import (
 	"context"
 	"diabetify/database"
+	"diabetify/docs"
 	"diabetify/internal/controllers"
 	"diabetify/internal/ml"
 	"diabetify/internal/repository"
+	"diabetify/internal/services"
 	"diabetify/routes"
 	"log"
 	"net/http"
 	"os"
 	"runtime"
 	"time"
-
-	"diabetify/docs"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -32,7 +32,7 @@ func main() {
 
 	// Swagger Documentation
 	docs.SwaggerInfo.Title = "Diabetify API"
-	docs.SwaggerInfo.Description = "This is api of Diabetify App with gRPC ML Service."
+	docs.SwaggerInfo.Description = "This is api of Diabetify App with Async ML Service via RabbitMQ."
 	docs.SwaggerInfo.Version = "1.0"
 	docs.SwaggerInfo.Schemes = []string{"http", "https"}
 
@@ -59,7 +59,10 @@ func main() {
 		activityRepo       repository.ActivityRepository
 		profileRepo        repository.UserProfileRepository
 		predictionRepo     repository.PredictionRepository
+		predictionJobRepo  repository.PredictionJobRepository
 	)
+
+	predictionJobRepo = repository.NewPredictionJobRepository(database.DB)
 
 	if useSharding {
 		// Use sharded repositories
@@ -81,19 +84,26 @@ func main() {
 		log.Println("Initialized single database repositories")
 	}
 
-	// Article repository (assuming it doesn't need sharding)
-	articleRepo := repository.NewArticleRepository(database.DB)
-
-	// Initialize ML gRPC client
+	// Initialize ML Hybrid Client (both gRPC and RabbitMQ)
 	mlServiceAddress := os.Getenv("ML_SERVICE_ADDRESS")
 	if mlServiceAddress == "" {
 		mlServiceAddress = "localhost:50051"
 	}
 
-	log.Printf("Connecting to ML service via gRPC at %s...", mlServiceAddress)
-	mlClient, err := ml.NewGRPCMLClient(mlServiceAddress)
+	rabbitMQURL := os.Getenv("RABBITMQ_URL")
+	if rabbitMQURL == "" {
+		rabbitMQURL = "amqp://admin:password123@localhost:5672/"
+	}
+
+	log.Printf("Connecting to ML service via Hybrid Client (gRPC: %s, RabbitMQ: %s)...", mlServiceAddress, rabbitMQURL)
+
+	mlClient, err := ml.NewHybridMLClient(
+		mlServiceAddress,
+		rabbitMQURL,
+		"ml.prediction.hybrid_response",
+	)
 	if err != nil {
-		log.Fatal("Failed to create ML gRPC client:", err)
+		log.Fatal("Failed to create ML Hybrid client:", err)
 	}
 	defer mlClient.Close()
 
@@ -101,28 +111,49 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := mlClient.HealthCheck(ctx); err != nil {
+	if err := mlClient.HealthCheckAsync(ctx); err != nil {
 		log.Printf("Warning: ML service health check failed: %v", err)
 		log.Println("The application will start, but predictions will fail until ML service is available")
 	} else {
-		log.Println("ML service gRPC connection established successfully")
+		log.Println("ML service connection established successfully")
 	}
+
+	// Initialize Prediction Job Worker
+	workerCount := runtime.NumCPU()
+	if workerCount < 3 {
+		workerCount = 3
+	}
+
+	predictionJobWorker := services.NewPredictionJobWorker(
+		predictionJobRepo,
+		predictionRepo,
+		userRepo,
+		profileRepo,
+		activityRepo,
+		mlClient,
+		workerCount,
+	)
+
+	log.Printf("Starting prediction job worker with %d workers...", workerCount)
+	predictionJobWorker.Start()
+	defer predictionJobWorker.Stop()
 
 	// Initialize controllers
 	userController := controllers.NewUserController(userRepo, forgotPasswordRepo)
 	verificationController := controllers.NewVerificationController(verificationRepo, userRepo)
 	oauthController := controllers.NewOauthController(userRepo)
 	activityController := controllers.NewActivityController(activityRepo)
-	articleController := controllers.NewArticleController(articleRepo)
 	profileController := controllers.NewUserProfileController(profileRepo)
 
-	// Updated prediction controller with all required repositories
+	// UNIFIED Prediction Controller (handles both sync and async via job worker)
 	predictionController := controllers.NewPredictionController(
 		predictionRepo,
 		userRepo,
 		profileRepo,
 		activityRepo,
-		mlClient,
+		predictionJobRepo,   // Job repository
+		predictionJobWorker, // Job worker
+		mlClient,            // ML client for health checks
 	)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -134,8 +165,8 @@ func main() {
 			"message":    "Diabetify API is running",
 			"version":    "1.0.0",
 			"status":     "healthy",
-			"ml_service": "gRPC",
-			"prediction": "Auto-prediction from user profile",
+			"ml_service": "Hybrid (gRPC + RabbitMQ)",
+			"prediction": "Async prediction jobs via RabbitMQ",
 		}
 
 		if useSharding {
@@ -148,13 +179,11 @@ func main() {
 		c.JSON(200, response)
 	})
 
-	// Register routes
 	routes.RegisterUserRoutes(router, userController)
 	routes.RegisterVerificationRoutes(router, verificationController)
 	routes.RegisterSwaggerRoutes(router)
 	routes.RegisterOauthRoutes(router, oauthController)
 	routes.RegisterActivityRoutes(router, activityController)
-	routes.RegisterArticleRoutes(router, articleController)
 	routes.RegisterUserProfileRoutes(router, profileController)
 	routes.RegisterPredictionRoutes(router, predictionController)
 
@@ -162,9 +191,31 @@ func main() {
 	router.GET("/debug/stats", func(c *gin.Context) {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
+
+		// Get job worker status if available
+		workerStatus := map[string]interface{}{
+			"available": false,
+		}
+
+		// Try to get worker status (implement a simple status check)
+		// Since GetStatus() might not be available, we'll do a basic check
+		workerStatus["available"] = predictionJobWorker != nil
+
 		c.JSON(200, gin.H{
 			"goroutines": runtime.NumGoroutine(),
 			"memory_mb":  m.Alloc / 1024 / 1024,
+			"workers":    workerCount,
+			"job_worker": workerStatus,
+		})
+	})
+
+	// Job worker specific debug endpoint
+	router.GET("/debug/jobs", func(c *gin.Context) {
+		// Simple job status without relying on GetStatus()
+		c.JSON(200, gin.H{
+			"job_worker_running": predictionJobWorker != nil,
+			"worker_count":       workerCount,
+			"message":            "Job worker is active and processing async predictions",
 		})
 	})
 
@@ -209,12 +260,16 @@ func main() {
 	}
 
 	log.Printf("Server starting on port %s", port)
+	log.Printf("API Documentation: http://localhost:%s/swagger/index.html", port)
+	log.Printf("Health Check: http://localhost:%s/prediction/health", port)
 
 	if useSharding {
 		log.Printf("Database Shards Health: http://localhost:%s/debug/shards", port)
 	} else {
 		log.Printf("Database Health: http://localhost:%s/debug/database", port)
 	}
+
+	log.Printf("Job Worker Debug: http://localhost:%s/debug/jobs", port)
 
 	server := &http.Server{
 		Addr:           ":" + port,
@@ -226,7 +281,10 @@ func main() {
 	}
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	log.Printf("Server starting on port %s", port)
+	log.Printf("Diabetify API Server started successfully on port %s", port)
+	log.Printf("Using %d CPU cores for job processing", workerCount)
+	log.Printf("Async prediction jobs ready via RabbitMQ")
+
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}

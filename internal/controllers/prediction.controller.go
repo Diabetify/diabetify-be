@@ -6,14 +6,15 @@ import (
 	"diabetify/internal/models"
 	"diabetify/internal/openai"
 	"diabetify/internal/repository"
+	"diabetify/internal/services"
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type PredictionController struct {
@@ -21,6 +22,8 @@ type PredictionController struct {
 	userRepo     repository.UserRepository
 	profileRepo  repository.UserProfileRepository
 	activityRepo repository.ActivityRepository
+	jobRepo      repository.PredictionJobRepository
+	jobWorker    *services.PredictionJobWorker
 	mlClient     ml.MLClient
 }
 
@@ -29,6 +32,8 @@ func NewPredictionController(
 	userRepo repository.UserRepository,
 	profileRepo repository.UserProfileRepository,
 	activityRepo repository.ActivityRepository,
+	jobRepo repository.PredictionJobRepository,
+	jobWorker *services.PredictionJobWorker,
 	mlClient ml.MLClient,
 ) *PredictionController {
 	return &PredictionController{
@@ -36,32 +41,89 @@ func NewPredictionController(
 		userRepo:     userRepo,
 		profileRepo:  profileRepo,
 		activityRepo: activityRepo,
+		jobRepo:      jobRepo,
+		jobWorker:    jobWorker,
 		mlClient:     mlClient,
 	}
 }
 
-type WhatIfInput struct {
-	SmokingStatus             int     `json:"smoking_status" binding:"oneof=0 1 2"`
-	YearsOfSmoking            int     `json:"years_of_smoking" binding:"min=0"`
-	AvgSmokeCount             int     `json:"avg_smoke_count" binding:"min=0"`
-	Weight                    float64 `json:"weight" binding:"min=1"`
-	IsHypertension            bool    `json:"is_hypertension"`
-	PhysicalActivityFrequency int     `json:"physical_activity_frequency" binding:"min=0"`
-	IsCholesterol             bool    `json:"is_cholesterol"`
+// TestMLConnection godoc
+// @Summary Test ML service connection
+// @Description Test the connection to the async ML service via RabbitMQ
+// @Tags prediction
+// @Produce json
+// @Success 200 {object} map[string]interface{} "ML service is healthy"
+// @Failure 500 {object} map[string]interface{} "ML service is not reachable"
+// @Router /prediction/health [get]
+func (pc *PredictionController) TestMLConnection(c *gin.Context) {
+	// Check if job worker is available and running
+	if pc.jobWorker == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Job worker is not available",
+		})
+		return
+	}
+
+	// Get job worker status
+	status := pc.jobWorker.GetStatus()
+
+	// Check if worker is running and RabbitMQ is connected
+	isRunning, runningOk := status["running"].(bool)
+	isRabbitMQConnected, rabbitOk := status["rabbitmq_connected"].(bool)
+
+	if runningOk && isRunning && rabbitOk && isRabbitMQConnected {
+		// Optionally test async health check
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var healthCheckStatus string = "not_tested"
+		if pc.mlClient != nil {
+			// Try async health check (non-blocking)
+			if err := pc.mlClient.HealthCheckAsync(ctx); err == nil {
+				healthCheckStatus = "message_sent"
+			} else {
+				healthCheckStatus = "failed_to_send"
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "success",
+			"message":   "Async ML service is healthy via RabbitMQ",
+			"timestamp": time.Now(),
+			"details": gin.H{
+				"service_type":       "async_only",
+				"worker_status":      status,
+				"communication":      "rabbitmq",
+				"async_health_check": healthCheckStatus,
+			},
+		})
+		return
+	}
+
+	// Service is not healthy
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"status":  "error",
+		"message": "Async ML service is not reachable via RabbitMQ",
+		"details": gin.H{
+			"service_type":  "async_only",
+			"worker_status": status,
+		},
+	})
 }
 
 // MakePrediction godoc
-// @Summary Make a prediction using user's profile data automatically
-// @Description Automatically fetch user data from database and make diabetes risk prediction via gRPC (requires authentication)
+// @Summary Make an asynchronous prediction using user's profile data
+// @Description Submit a prediction job using RabbitMQ for asynchronous processing
 // @Tags prediction
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{} "Prediction result"
+// @Success 202 {object} map[string]interface{} "Prediction job submitted"
 // @Failure 400 {object} map[string]interface{} "Incomplete user profile"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "User profile not found"
-// @Failure 500 {object} map[string]interface{} "Prediction failed"
+// @Failure 500 {object} map[string]interface{} "Failed to submit job"
 // @Router /prediction [post]
 func (pc *PredictionController) MakePrediction(c *gin.Context) {
 	userID, exists := c.Get("user_id")
@@ -73,175 +135,87 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		return
 	}
 
-	// Get user data
-	user, err := pc.userRepo.GetUserByID(userID.(uint))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "User not found",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// Get user profile
-	profile, err := pc.profileRepo.FindByUserID(userID.(uint))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "User profile not found. Please complete your profile first.",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// Calculate features from user data
-	features, featureInfo, err := pc.calculateFeaturesFromProfile(user, profile, userID.(uint), nil)
-	if err != nil {
+	// Validate user profile exists and is complete
+	if err := pc.validateUserProfile(userID.(uint)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Incomplete profile data for prediction",
+			"message": "Incomplete user profile",
 			"error":   err.Error(),
 			"help":    "Please ensure all required profile fields are filled: age, weight, height, smoking status, macrosomic baby history, hypertension status, cholesterol status, diabetes bloodline",
 		})
 		return
 	}
 
-	// Create context with timeout for gRPC call
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-	defer cancel()
+	// Generate job ID
+	jobID := uuid.New().String()
 
-	// Call the ML service via gRPC
-	response, err := pc.mlClient.Predict(ctx, features)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "Prediction failed",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// Helper function to safely extract explanation values
-	getExplanation := func(key string) (float64, float64, float64) {
-		if exp, exists := response.Explanation[key]; exists {
-			return exp.Shap, exp.Contribution, float64(exp.Impact)
-		}
-		return 0.0, 0.0, 0.0
-	}
-
-	// Extract explanations safely
-	ageShap, ageContribution, ageImpact := getExplanation("age")
-	bmiShap, bmiContribution, bmiImpact := getExplanation("BMI")
-	brinkmanShap, brinkmanContribution, brinkmanImpact := getExplanation("brinkman_index")
-	hypertensionShap, hypertensionContribution, hypertensionImpact := getExplanation("is_hypertension")
-	cholesterolShap, cholesterolContribution, cholesterolImpact := getExplanation("is_cholesterol")
-	bloodlineShap, bloodlineContribution, bloodlineImpact := getExplanation("is_bloodline")
-	macrosomicShap, macrosomicContribution, macrosomicImpact := getExplanation("is_macrosomic_baby")
-	smokingShap, smokingContribution, smokingImpact := getExplanation("smoking_status")
-	activityShap, activityContribution, activityImpact := getExplanation("moderate_physical_activity_frequency")
-
-	// Create a new prediction record for database
-	prediction := &models.Prediction{
+	// Create job record in database
+	job := &models.PredictionJob{
+		ID:        jobID,
 		UserID:    userID.(uint),
-		RiskScore: response.Prediction,
-
-		Age:             featureInfo["age"].(int),
-		AgeShap:         ageShap,
-		AgeContribution: ageContribution,
-		AgeImpact:       ageImpact,
-
-		BMI:             featureInfo["bmi"].(float64),
-		BMIShap:         bmiShap,
-		BMIContribution: bmiContribution,
-		BMIImpact:       bmiImpact,
-
-		BrinkmanScore:             featureInfo["brinkman_score"].(int),
-		BrinkmanScoreShap:         brinkmanShap,
-		BrinkmanScoreContribution: brinkmanContribution,
-		BrinkmanScoreImpact:       brinkmanImpact,
-
-		IsHypertension:             featureInfo["is_hypertension"].(bool),
-		IsHypertensionShap:         hypertensionShap,
-		IsHypertensionContribution: hypertensionContribution,
-		IsHypertensionImpact:       hypertensionImpact,
-
-		IsCholesterol:             featureInfo["is_cholesterol"].(bool),
-		IsCholesterolShap:         cholesterolShap,
-		IsCholesterolContribution: cholesterolContribution,
-		IsCholesterolImpact:       cholesterolImpact,
-
-		IsBloodline:             featureInfo["is_bloodline"].(bool),
-		IsBloodlineShap:         bloodlineShap,
-		IsBloodlineContribution: bloodlineContribution,
-		IsBloodlineImpact:       bloodlineImpact,
-
-		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(int),
-		IsMacrosomicBabyShap:         macrosomicShap,
-		IsMacrosomicBabyContribution: macrosomicContribution,
-		IsMacrosomicBabyImpact:       macrosomicImpact,
-
-		SmokingStatus:             featureInfo["smoking_status"].(int),
-		SmokingStatusShap:         smokingShap,
-		SmokingStatusContribution: smokingContribution,
-		SmokingStatusImpact:       smokingImpact,
-
-		PhysicalActivityFrequency:             featureInfo["physical_activity_frequency"].(int),
-		PhysicalActivityFrequencyShap:         activityShap,
-		PhysicalActivityFrequencyContribution: activityContribution,
-		PhysicalActivityFrequencyImpact:       activityImpact,
+		Status:    models.JobStatusPending,
+		Progress:  0,
+		Step:      models.JobStepValidatingProfile,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
-	// Save to database
-	if err := pc.repo.SavePrediction(prediction); err != nil {
+	if err := pc.jobRepo.SaveJob(job); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
-			"message": "Failed to save prediction",
+			"message": "Failed to create prediction job",
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	// Update the last prediction time for the user
-	now := time.Now()
-	if err := pc.userRepo.UpdateLastPredictionTime(userID.(uint), &now); err != nil {
+	// Submit job to worker
+	jobRequest := models.PredictionJobRequest{
+		JobID:       jobID,
+		UserID:      userID.(uint),
+		WhatIfInput: nil, // Regular prediction
+	}
+
+	if err := pc.jobWorker.SubmitJob(jobRequest); err != nil {
+		// Update job status to failed
+		errMsg := fmt.Sprintf("Failed to submit job: %v", err)
+		pc.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
-			"message": "Failed to update last prediction time",
+			"message": "Failed to submit prediction job",
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	// Return comprehensive response
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusAccepted, gin.H{
 		"status":  "success",
-		"message": "Prediction successful via gRPC using your profile data",
+		"message": "Prediction job submitted successfully",
 		"data": gin.H{
-			"prediction_id":   prediction.ID,
-			"risk_score":      response.Prediction,
-			"risk_percentage": response.Prediction * 100,
-			"ml_service_time": response.ElapsedTime,
-			"timestamp":       response.Timestamp,
-			"user_data_used": gin.H{
-				"age":                         featureInfo["age"],
-				"smoking_status":              featureInfo["smoking_status"],
-				"is_macrosomic_baby":          featureInfo["is_macrosomic_baby"],
-				"brinkman_score":              featureInfo["brinkman_score"],
-				"bmi":                         featureInfo["bmi"],
-				"is_hypertension":             featureInfo["is_hypertension"],
-				"is_cholesterol":              featureInfo["is_cholesterol"],
-				"is_bloodline":                featureInfo["is_bloodline"],
-				"physical_activity_frequency": featureInfo["physical_activity_frequency"],
-				"avg_smoke_count":             featureInfo["avg_smoke_count"],
-			},
-			"feature_explanations": response.Explanation,
+			"job_id":      jobID,
+			"status":      models.JobStatusPending,
+			"submit_time": time.Now(),
+			"poll_url":    fmt.Sprintf("/prediction/job/%s/status", jobID),
 		},
 	})
 }
 
+// WhatIfPrediction godoc
+// @Summary Make an asynchronous what-if prediction
+// @Description Submit a what-if prediction job using custom parameters via RabbitMQ
+// @Tags prediction
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param input body models.WhatIfInput true "What-if prediction parameters"
+// @Success 202 {object} map[string]interface{} "What-if prediction job submitted"
+// @Failure 400 {object} map[string]interface{} "Invalid input or incomplete profile"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Failed to submit job"
+// @Router /prediction/what-if [post]
 func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
-	var input WhatIfInput
+	var input models.WhatIfInput
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -260,436 +234,483 @@ func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
 		return
 	}
 
-	// Get user data
-	user, err := pc.userRepo.GetUserByID(userID.(uint))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "User not found",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// Get user profile
-	profile, err := pc.profileRepo.FindByUserID(userID.(uint))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "User profile not found. Please complete your profile first.",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// Calculate features from user data
-	features, featureInfo, err := pc.calculateFeaturesFromProfile(user, profile, userID.(uint), &input)
-	if err != nil {
+	// Validate user profile exists (basic data needed for what-if)
+	if err := pc.validateUserProfile(userID.(uint)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Incomplete profile data for prediction",
+			"message": "Incomplete user profile",
 			"error":   err.Error(),
-			"help":    "Please ensure all required profile fields are filled: age, weight, height, smoking status, macrosomic baby history, hypertension status, cholesterol status, diabetes bloodline",
 		})
 		return
 	}
 
-	// Create context with timeout for gRPC call
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-	defer cancel()
+	// Generate job ID
+	jobID := uuid.New().String()
 
-	// Call the ML service via gRPC
-	response, err := pc.mlClient.Predict(ctx, features)
-	if err != nil {
+	// Create job record in database
+	job := &models.PredictionJob{
+		ID:        jobID,
+		UserID:    userID.(uint),
+		Status:    models.JobStatusPending,
+		Progress:  0,
+		Step:      models.JobStepValidatingProfile,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := pc.jobRepo.SaveJob(job); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
-			"message": "Prediction failed",
+			"message": "Failed to create what-if prediction job",
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	// Return comprehensive response
-	c.JSON(http.StatusOK, gin.H{
+	// Submit job to worker
+	jobRequest := models.PredictionJobRequest{
+		JobID:       jobID,
+		UserID:      userID.(uint),
+		WhatIfInput: &input, // What-if prediction with custom parameters
+	}
+
+	if err := pc.jobWorker.SubmitJob(jobRequest); err != nil {
+		// Update job status to failed
+		errMsg := fmt.Sprintf("Failed to submit job: %v", err)
+		pc.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to submit what-if prediction job",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
 		"status":  "success",
-		"message": "Prediction successful via gRPC using your profile data",
+		"message": "What-if prediction job submitted successfully",
 		"data": gin.H{
-			"risk_score":      response.Prediction,
-			"risk_percentage": response.Prediction * 100,
-			"ml_service_time": response.ElapsedTime,
-			"timestamp":       response.Timestamp,
-			"user_data_used": gin.H{
-				"age":                         featureInfo["age"],
-				"smoking_status":              featureInfo["smoking_status"],
-				"is_macrosomic_baby":          featureInfo["is_macrosomic_baby"],
-				"brinkman_score":              featureInfo["brinkman_score"],
-				"bmi":                         featureInfo["bmi"],
-				"is_hypertension":             featureInfo["is_hypertension"],
-				"is_cholesterol":              featureInfo["is_cholesterol"],
-				"is_bloodline":                featureInfo["is_bloodline"],
-				"physical_activity_frequency": featureInfo["physical_activity_frequency"],
-				"avg_smoke_count":             featureInfo["avg_smoke_count"],
-			},
-			"feature_explanations": response.Explanation,
+			"job_id":      jobID,
+			"status":      models.JobStatusPending,
+			"submit_time": time.Now(),
+			"poll_url":    fmt.Sprintf("/prediction/job/%s/status", jobID),
+			"input_used":  input,
 		},
 	})
 }
 
-func (pc *PredictionController) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *WhatIfInput) ([]float64, map[string]interface{}, error) {
-	// Calculate age from string DOB
-	if user.DOB == nil {
-		return nil, nil, fmt.Errorf("date of birth is required but not found")
-	}
-
-	// Parse the DOB string - try multiple formats
-	var dobTime time.Time
-	var err error
-
-	dobTime, err = time.Parse(time.RFC3339, *user.DOB)
-	if err != nil {
-		dobTime, err = time.Parse("2006-01-02", *user.DOB)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid date of birth format. Expected YYYY-MM-DD, got: %s", *user.DOB)
-		}
-	}
-
-	// Calculate age
-	now := time.Now()
-	age := now.Year() - dobTime.Year()
-	if now.YearDay() < dobTime.YearDay() {
-		age--
-	}
-
-	// Check MacrosomicBaby (safely handle nil)
-	if profile.MacrosomicBaby == nil {
-		return nil, nil, fmt.Errorf("macrosomic baby history is required but not found")
-	}
-	isMacrosomicBaby := *profile.MacrosomicBaby
-
-	// Check Bloodline (safely handle nil)
-	if profile.Bloodline == nil {
-		return nil, nil, fmt.Errorf("bloodline status is required but not found")
-	}
-	isBloodline := *profile.Bloodline
-
-	var (
-		smokingStatus             int
-		bmi                       float64
-		isHypertension            bool
-		physicalActivityFrequency int
-		isCholesterol             bool
-		brinkmanIndex             int
-		avgSmokeCount             int
-	)
-
-	if input == nil {
-		// Normal prediction using profile data
-
-		// Check BMI
-		if profile.BMI == nil {
-			return nil, nil, fmt.Errorf("BMI is required but not found")
-		}
-		bmi = *profile.BMI
-
-		// Check Hypertension (safely handle nil)
-		if profile.Hypertension == nil {
-			return nil, nil, fmt.Errorf("hypertension status is required but not found")
-		}
-		isHypertension = *profile.Hypertension
-
-		// Check Cholesterol (safely handle nil)
-		if profile.Cholesterol == nil {
-			return nil, nil, fmt.Errorf("cholesterol status is required but not found")
-		}
-		isCholesterol = *profile.Cholesterol
-
-		// Calculate smoking status based on activity data (last 8 weeks)
-		smokingStatus, err = pc.calculateSmokingStatus(userID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate smoking status: %v", err)
-		}
-
-		// Calculate physical activity (sum frequency per 1 week)
-		physicalActivityFrequency, err = pc.calculatePhysicalActivityFrequency(userID, profile)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
-		}
-
-		// Calculate Brinkman index using profile data
-		if profile.SmokeCount != nil {
-			avgSmokeCount = *profile.SmokeCount
-			brinkmanIndex, err = calculateBrinkmanIndex(user, profile, avgSmokeCount)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
-			}
-		} else {
-			avgSmokeCount = 0
-			brinkmanIndex = 0
-		}
-
-	} else {
-		// What-if prediction using custom input
-		smokingStatus = input.SmokingStatus
-		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
-		isHypertension = input.IsHypertension
-		physicalActivityFrequency = input.PhysicalActivityFrequency
-		isCholesterol = input.IsCholesterol
-		avgSmokeCount = input.AvgSmokeCount
-
-		brinkmanIndex, err = calculateBrinkmanIndex(user, profile, input.AvgSmokeCount)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
-		}
-	}
-
-	// Create features array for ML model
-	features := []float64{
-		float64(age),                       // 1. Age
-		float64(smokingStatus),             // 2. Smoking status (0, 1, or 2)
-		boolToFloat(isCholesterol),         // 3. Is cholesterol (0 or 1)
-		float64(isMacrosomicBaby),          // 4. Is macrosomic baby (0, 1, or 2)
-		float64(physicalActivityFrequency), // 5. Physical activity frequency
-		boolToFloat(isBloodline),           // 6. Is bloodline (0 or 1)
-		float64(brinkmanIndex),             // 7. Brinkman index
-		bmi,                                // 8. BMI
-		boolToFloat(isHypertension),        // 9. Is hypertension (0 or 1)
-	}
-
-	featureInfo := map[string]interface{}{
-		"age":                         age,
-		"smoking_status":              smokingStatus,
-		"is_macrosomic_baby":          isMacrosomicBaby,
-		"brinkman_score":              brinkmanIndex,
-		"bmi":                         bmi,
-		"is_hypertension":             isHypertension,
-		"is_cholesterol":              isCholesterol,
-		"is_bloodline":                isBloodline,
-		"physical_activity_frequency": physicalActivityFrequency,
-		"avg_smoke_count":             avgSmokeCount,
-	}
-
-	return features, featureInfo, nil
-}
-
-// Helper functions
-func boolToFloat(b bool) float64 {
-	if b {
-		return 1.0
-	}
-	return 0.0
-}
-
-// calculateSmokingStatus determines smoking status based on profile data and activity data (8 weeks)
-// Returns: 0 = never smoked, 1 = used to smoke, 2 = current smoker
-func (pc *PredictionController) calculateSmokingStatus(userID uint) (int, error) {
-	// Get user profile
-	profile, err := pc.profileRepo.FindByUserID(userID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to retrieve user profile: %v", err)
-	}
-
-	// Get user data for age calculation
-	user, err := pc.userRepo.GetUserByID(userID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to retrieve user data: %v", err)
-	}
-
-	// Calculate current age
-	var currentAge int
-	if user.DOB != nil && *user.DOB != "" {
-		// Try different date formats as PostgreSQL might return different formats
-		var dobTime time.Time
-		var err error
-
-		// Common PostgreSQL timestamp formats
-		formats := []string{
-			"2006-01-02T15:04:05Z", // ISO 8601 with timezone
-			"2006-01-02T15:04:05",  // ISO 8601 without timezone
-			"2006-01-02 15:04:05",  // PostgreSQL default format
-			"2006-01-02",           // Date only
-		}
-
-		for _, format := range formats {
-			dobTime, err = time.Parse(format, *user.DOB)
-			if err == nil {
-				break
-			}
-		}
-
-		if err != nil {
-			return 0, fmt.Errorf("failed to parse DOB: %v", err)
-		}
-
-		now := time.Now()
-		currentAge = now.Year() - dobTime.Year()
-
-		// Adjust if birthday hasn't occurred this year
-		if now.Month() < dobTime.Month() || (now.Month() == dobTime.Month() && now.Day() < dobTime.Day()) {
-			currentAge--
-		}
-	} else {
-		return 0, fmt.Errorf("user DOB is required for age calculation")
-	}
-
-	// Get smoking activities from last 8 weeks
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -56)
-
-	recentActivities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
-	if err != nil {
-		return 0, err
-	}
-
-	// Check if user never smoked (case 0)
-	if (profile.AgeOfSmoking == nil || *profile.AgeOfSmoking == 0) && len(recentActivities) == 0 {
-		return 0, nil
-	}
-
-	// Check if user is current smoker (case 2)
-	// Case 2a: Profile indicates current smoker (no stop age or stop age is 0)
-	if profile.AgeOfSmoking != nil && *profile.AgeOfSmoking != 0 && (profile.AgeOfStopSmoking == nil || *profile.AgeOfStopSmoking == 0) {
-		// Update smoking status to 2 in profile
-		err = pc.profileRepo.Patch(userID, map[string]interface{}{
-			"smoking": 2,
-		})
-		if err != nil {
-			return 0, fmt.Errorf("failed to update smoking status: %v", err)
-		}
-		return 2, nil
-	}
-
-	// Case 2b: Even if stopped smoking according to profile, but has recent activities
-	if len(recentActivities) > 0 {
-		// Update smoking status to 2 in profile
-		err = pc.profileRepo.Patch(userID, map[string]interface{}{
-			"smoking": 2,
-		})
-		if err != nil {
-			return 0, fmt.Errorf("failed to update smoking status: %v", err)
-		}
-		return 2, nil
-	}
-
-	// Check if user used to smoke (case 1)
-	if profile.AgeOfSmoking != nil && *profile.AgeOfSmoking != 0 &&
-		profile.AgeOfStopSmoking != nil && *profile.AgeOfStopSmoking != 0 &&
-		currentAge > *profile.AgeOfStopSmoking {
-		// Update smoking status to 1 in profile
-		err = pc.profileRepo.Patch(userID, map[string]interface{}{
-			"smoking": 1,
-		})
-		if err != nil {
-			return 0, fmt.Errorf("failed to update smoking status: %v", err)
-		}
-		return 1, nil
-	}
-
-	// Default case: never smoked
-	return 0, nil
-}
-
-func calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
-	now := time.Now()
-
-	ageOfSmoking := 0
-	if profile.AgeOfSmoking != nil {
-		ageOfSmoking = *profile.AgeOfSmoking
-	}
-
-	yearsOfSmoking := 0
-
-	if profile.AgeOfStopSmoking != nil {
-		yearsOfSmoking = *profile.AgeOfStopSmoking - ageOfSmoking
-	} else {
-		if user.DOB == nil {
-			return 0, fmt.Errorf("date of birth is required")
-		}
-
-		dob, err := time.Parse("2006-01-02", *user.DOB)
-		if err != nil {
-			return 0, fmt.Errorf("invalid date of birth format: %v", err)
-		}
-
-		// Calculate current age
-		age := now.Year() - dob.Year()
-		if now.Month() < dob.Month() || (now.Month() == dob.Month() && now.Day() < dob.Day()) {
-			age--
-		}
-
-		yearsOfSmoking = age - ageOfSmoking
-	}
-
-	// Ensure non-negative years of smoking
-	if yearsOfSmoking < 0 {
-		yearsOfSmoking = 0
-	}
-
-	brinkmanIndex := yearsOfSmoking * avgSmokeCount
-
-	switch {
-	case brinkmanIndex <= 0:
-		return 0, nil
-	case brinkmanIndex < 200:
-		return 1, nil
-	case brinkmanIndex < 600:
-		return 2, nil
-	default:
-		return 3, nil
-	}
-}
-
-// calculatePhysicalActivityFrequency calculates sum workout frequency per 1 week
-func (pc *PredictionController) calculatePhysicalActivityFrequency(userID uint, profile *models.UserProfile) (int, error) {
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -7)
-
-	var totalFrequency int
-
-	if profile.CreatedAt.Before(startDate) {
-		activities, err := pc.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
-		if err != nil {
-			return 0, err
-		}
-
-		totalFrequency = 0
-		for _, activity := range activities {
-			totalFrequency += activity.Value
-		}
-	} else if profile.PhysicalActivityFrequency != nil {
-		totalFrequency = *profile.PhysicalActivityFrequency
-	}
-
-	// Calculate sum frequency per day over the 7 days
-	return totalFrequency, nil
-}
-
-// TestMLConnection godoc
-// @Summary Test ML service connection via gRPC
-// @Description Test the gRPC connection to the ML service
+// GetJobStatus godoc
+// @Summary Get prediction job status
+// @Description Get the current status and progress of a prediction job
 // @Tags prediction
 // @Produce json
-// @Success 200 {object} map[string]interface{} "ML service is healthy"
-// @Failure 500 {object} map[string]interface{} "ML service is not reachable"
-// @Router /prediction/predict/health [get]
-func (pc *PredictionController) TestMLConnection(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
+// @Security ApiKeyAuth
+// @Param job_id path string true "Job ID"
+// @Success 200 {object} map[string]interface{} "Job status retrieved"
+// @Failure 400 {object} map[string]interface{} "Invalid job ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Job belongs to different user"
+// @Failure 404 {object} map[string]interface{} "Job not found"
+// @Router /prediction/job/{job_id}/status [get]
+func (pc *PredictionController) GetJobStatus(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
+	}
 
-	if err := pc.mlClient.HealthCheck(ctx); err != nil {
+	jobID := c.Param("job_id")
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Job ID is required",
+		})
+		return
+	}
+
+	// Get job from database
+	job, err := pc.jobRepo.GetJobByID(jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Job not found",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Check if job belongs to user
+	if job.UserID != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Job belongs to a different user",
+		})
+		return
+	}
+
+	response := gin.H{
+		"status":  "success",
+		"message": "Job status retrieved successfully",
+		"data": gin.H{
+			"job_id":     job.ID,
+			"status":     job.Status,
+			"progress":   job.Progress,
+			"step":       job.Step,
+			"created_at": job.CreatedAt,
+			"updated_at": job.UpdatedAt,
+		},
+	}
+
+	// If job is completed, include result
+	if job.Status == models.JobStatusCompleted && job.PredictionID != nil {
+		prediction, err := pc.repo.GetPredictionByID(*job.PredictionID)
+		if err == nil {
+			response["data"].(gin.H)["result"] = gin.H{
+				"prediction_id":   prediction.ID,
+				"risk_score":      prediction.RiskScore,
+				"risk_percentage": prediction.RiskScore * 100,
+				"created_at":      prediction.CreatedAt,
+			}
+		}
+	}
+
+	// If job failed, include error message
+	if job.Status == models.JobStatusFailed && job.ErrorMessage != nil {
+		response["data"].(gin.H)["error"] = *job.ErrorMessage
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetJobResult godoc
+// @Summary Get prediction job result
+// @Description Get the detailed result of a completed prediction job
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Param job_id path string true "Job ID"
+// @Success 200 {object} map[string]interface{} "Job result retrieved"
+// @Failure 400 {object} map[string]interface{} "Invalid job ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Job belongs to different user"
+// @Failure 404 {object} map[string]interface{} "Job not found or not completed"
+// @Router /prediction/job/{job_id}/result [get]
+func (pc *PredictionController) GetJobResult(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
+	}
+
+	jobID := c.Param("job_id")
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Job ID is required",
+		})
+		return
+	}
+
+	// Get job from database
+	job, err := pc.jobRepo.GetJobByID(jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Job not found",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Check if job belongs to user
+	if job.UserID != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Job belongs to a different user",
+		})
+		return
+	}
+
+	// Check if job is completed
+	if job.Status != models.JobStatusCompleted {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": fmt.Sprintf("Job is not completed yet. Current status: %s", job.Status),
+			"current_status": gin.H{
+				"status":   job.Status,
+				"progress": job.Progress,
+				"step":     job.Step,
+			},
+		})
+		return
+	}
+
+	// Check if result exists
+	if job.PredictionID == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Job completed but no result found",
+		})
+		return
+	}
+
+	// Get prediction result
+	prediction, err := pc.repo.GetPredictionByID(*job.PredictionID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Prediction result not found",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Build feature explanations map
+	featureExplanations := make(map[string]map[string]interface{})
+	features := []struct {
+		name         string
+		shap         float64
+		contribution float64
+		impact       float64
+	}{
+		{"age", prediction.AgeShap, prediction.AgeContribution, prediction.AgeImpact},
+		{"BMI", prediction.BMIShap, prediction.BMIContribution, prediction.BMIImpact},
+		{"brinkman_index", prediction.BrinkmanScoreShap, prediction.BrinkmanScoreContribution, prediction.BrinkmanScoreImpact},
+		{"is_hypertension", prediction.IsHypertensionShap, prediction.IsHypertensionContribution, prediction.IsHypertensionImpact},
+		{"is_cholesterol", prediction.IsCholesterolShap, prediction.IsCholesterolContribution, prediction.IsCholesterolImpact},
+		{"is_bloodline", prediction.IsBloodlineShap, prediction.IsBloodlineContribution, prediction.IsBloodlineImpact},
+		{"is_macrosomic_baby", prediction.IsMacrosomicBabyShap, prediction.IsMacrosomicBabyContribution, prediction.IsMacrosomicBabyImpact},
+		{"smoking_status", prediction.SmokingStatusShap, prediction.SmokingStatusContribution, prediction.SmokingStatusImpact},
+		{"moderate_physical_activity_frequency", prediction.PhysicalActivityFrequencyShap, prediction.PhysicalActivityFrequencyContribution, prediction.PhysicalActivityFrequencyImpact},
+	}
+
+	for _, feature := range features {
+		featureExplanations[feature.name] = map[string]interface{}{
+			"shap":         feature.shap,
+			"contribution": feature.contribution,
+			"impact":       int(feature.impact),
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Job result retrieved successfully",
+		"data": gin.H{
+			"job_id":          job.ID,
+			"prediction_id":   prediction.ID,
+			"risk_score":      prediction.RiskScore,
+			"risk_percentage": prediction.RiskScore * 100,
+			"timestamp":       prediction.CreatedAt,
+			"user_data_used": gin.H{
+				"age":                         prediction.Age,
+				"smoking_status":              prediction.SmokingStatus,
+				"is_macrosomic_baby":          prediction.IsMacrosomicBaby,
+				"brinkman_score":              prediction.BrinkmanScore,
+				"bmi":                         prediction.BMI,
+				"is_hypertension":             prediction.IsHypertension,
+				"is_cholesterol":              prediction.IsCholesterol,
+				"is_bloodline":                prediction.IsBloodline,
+				"physical_activity_frequency": prediction.PhysicalActivityFrequency,
+			},
+			"feature_explanations": featureExplanations,
+			"job_info": gin.H{
+				"completed_at":    job.UpdatedAt,
+				"processing_time": job.UpdatedAt.Sub(job.CreatedAt).String(),
+			},
+		},
+	})
+}
+
+// GetUserJobs godoc
+// @Summary Get user's prediction jobs
+// @Description Get all prediction jobs for the authenticated user
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Param status query string false "Filter by job status (pending, processing, completed, failed)"
+// @Param limit query int false "Limit number of jobs returned (default: 10)"
+// @Success 200 {object} map[string]interface{} "Jobs retrieved successfully"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Failed to retrieve jobs"
+// @Router /prediction/jobs [get]
+func (pc *PredictionController) GetUserJobs(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
+	}
+
+	// Parse query parameters
+	status := c.Query("status")
+	limitStr := c.Query("limit")
+	limit := 10 // Default limit
+	if limitStr != "" {
+		var err error
+		limit, err = strconv.Atoi(limitStr)
+		if err != nil || limit <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Invalid limit parameter",
+				"error":   "Limit must be a positive integer",
+			})
+			return
+		}
+	}
+
+	// Get jobs from database
+	var jobs []*models.PredictionJob
+	var err error
+
+	if status != "" {
+		jobs, err = pc.jobRepo.GetJobsByUserIDAndStatus(userID.(uint), status, limit)
+	} else {
+		jobs, err = pc.jobRepo.GetJobsByUserID(userID.(uint), limit)
+	}
+
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
-			"message": "ML service is not reachable via gRPC",
+			"message": "Failed to retrieve jobs",
 			"error":   err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":    "success",
-		"message":   "ML service is healthy via gRPC",
-		"timestamp": time.Now(),
+		"status":  "success",
+		"message": "Jobs retrieved successfully",
+		"data": gin.H{
+			"jobs":  jobs,
+			"count": len(jobs),
+		},
 	})
 }
+
+// CancelJob godoc
+// @Summary Cancel a prediction job
+// @Description Cancel a pending or processing prediction job
+// @Tags prediction
+// @Produce json
+// @Security ApiKeyAuth
+// @Param job_id path string true "Job ID"
+// @Success 200 {object} map[string]interface{} "Job cancelled successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid job ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Job belongs to different user"
+// @Failure 404 {object} map[string]interface{} "Job not found"
+// @Router /prediction/job/{job_id}/cancel [post]
+func (pc *PredictionController) CancelJob(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "Unauthorized access",
+		})
+		return
+	}
+
+	jobID := c.Param("job_id")
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Job ID is required",
+		})
+		return
+	}
+
+	// Get job to verify ownership
+	job, err := pc.jobRepo.GetJobByID(jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Job not found",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Check if job belongs to user
+	if job.UserID != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Job belongs to a different user",
+		})
+		return
+	}
+
+	// Cancel the job
+	if err := pc.jobRepo.CancelJob(jobID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Failed to cancel job",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Job cancelled successfully",
+		"data": gin.H{
+			"job_id":       jobID,
+			"cancelled_at": time.Now(),
+		},
+	})
+}
+
+// validateUserProfile checks if user profile has all required fields
+func (pc *PredictionController) validateUserProfile(userID uint) error {
+	// Get user data
+	user, err := pc.userRepo.GetUserByID(userID)
+	if err != nil {
+		return fmt.Errorf("user not found: %v", err)
+	}
+
+	// Get user profile
+	profile, err := pc.profileRepo.FindByUserID(userID)
+	if err != nil {
+		return fmt.Errorf("user profile not found: %v", err)
+	}
+
+	// Validate required fields
+	if user.DOB == nil {
+		return fmt.Errorf("date of birth is required")
+	}
+
+	if profile.BMI == nil {
+		return fmt.Errorf("BMI is required")
+	}
+
+	if profile.MacrosomicBaby == nil {
+		return fmt.Errorf("macrosomic baby history is required")
+	}
+
+	if profile.Bloodline == nil {
+		return fmt.Errorf("diabetes bloodline status is required")
+	}
+
+	if profile.Hypertension == nil {
+		return fmt.Errorf("hypertension status is required")
+	}
+
+	if profile.Cholesterol == nil {
+		return fmt.Errorf("cholesterol status is required")
+	}
+
+	return nil
+}
+
+// ========== EXISTING METHODS (unchanged for backward compatibility) ==========
 
 // GetUserPredictions godoc
 // @Summary Get user's prediction history
@@ -745,19 +766,7 @@ func (pc *PredictionController) GetUserPredictions(c *gin.Context) {
 	})
 }
 
-// GetPredictionsByDateRange godoc
-// @Summary Get user's prediction history by date range
-// @Description Retrieve prediction history for the authenticated user within a date range
-// @Tags prediction
-// @Produce json
-// @Security ApiKeyAuth
-// @Param start_date query string true "Start date (YYYY-MM-DD)"
-// @Param end_date query string true "End date (YYYY-MM-DD)"
-// @Success 200 {object} map[string]interface{} "Prediction history retrieved successfully"
-// @Failure 400 {object} map[string]interface{} "Invalid date format"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 500 {object} map[string]interface{} "Failed to retrieve prediction history"
-// @Router /prediction/me/date-range [get]
+// GetPredictionsByDateRange - unchanged
 func (pc *PredictionController) GetPredictionsByDateRange(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -811,19 +820,7 @@ func (pc *PredictionController) GetPredictionsByDateRange(c *gin.Context) {
 	})
 }
 
-// GetPredictionByID godoc
-// @Summary Get prediction by ID
-// @Description Retrieve a specific prediction by ID
-// @Tags prediction
-// @Produce json
-// @Security ApiKeyAuth
-// @Param id path int true "Prediction ID"
-// @Success 200 {object} map[string]interface{} "Prediction retrieved successfully"
-// @Failure 400 {object} map[string]interface{} "Invalid prediction ID"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 403 {object} map[string]interface{} "Forbidden"
-// @Failure 404 {object} map[string]interface{} "Prediction not found"
-// @Router /prediction/{id} [get]
+// GetPredictionByID - unchanged
 func (pc *PredictionController) GetPredictionByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -868,19 +865,7 @@ func (pc *PredictionController) GetPredictionByID(c *gin.Context) {
 	})
 }
 
-// DeletePrediction godoc
-// @Summary Delete a prediction
-// @Description Delete a specific prediction by ID
-// @Tags prediction
-// @Produce json
-// @Security ApiKeyAuth
-// @Param id path int true "Prediction ID"
-// @Success 200 {object} map[string]interface{} "Prediction deleted successfully"
-// @Failure 400 {object} map[string]interface{} "Invalid prediction ID"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 403 {object} map[string]interface{} "Forbidden"
-// @Failure 404 {object} map[string]interface{} "Prediction not found"
-// @Router /prediction/{id} [delete]
+// DeletePrediction - unchanged
 func (pc *PredictionController) DeletePrediction(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -933,6 +918,7 @@ func (pc *PredictionController) DeletePrediction(c *gin.Context) {
 	})
 }
 
+// GetPredictionScoreByDate - unchanged
 func (pc *PredictionController) GetPredictionScoreByDate(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -985,18 +971,7 @@ func (pc *PredictionController) GetPredictionScoreByDate(c *gin.Context) {
 	})
 }
 
-// GetLatestPredictionExplanation godoc
-// @Summary Get latest prediction with LLM explanation for current user
-// @Description Get the most recent prediction with detailed LLM explanation for the authenticated user
-// @Tags prediction
-// @Accept json
-// @Produce json
-// @Security ApiKeyAuth
-// @Success 200 {object} models.Prediction "Latest prediction with explanation"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 404 {object} map[string]interface{} "No prediction found"
-// @Failure 500 {object} map[string]interface{} "Internal server error"
-// @Router /prediction/me/latest [get]
+// GetLatestPredictionExplanation - unchanged
 func (pc *PredictionController) GetLatestPredictionExplanation(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {

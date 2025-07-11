@@ -19,6 +19,7 @@ func MigrateDatabase() error {
 		&models.Verification{},
 		&models.ResetPassword{},
 		&models.Prediction{},
+		&models.PredictionJob{},
 	)
 
 	if err != nil {
@@ -55,6 +56,7 @@ func migrateOnShard(db *gorm.DB) error {
 		&models.Verification{},
 		&models.ResetPassword{},
 		&models.Prediction{},
+		&models.PredictionJob{},
 	)
 
 	if err != nil {
