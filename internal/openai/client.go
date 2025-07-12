@@ -292,7 +292,7 @@ The output MUST be a **valid JSON object** with the following structure:
 ### 'summary'
 A 2-sentence summary
 1. State the overall diabetes risk percentage and its category (Low: <35%%, Moderate: 35-55%%, High: 55-70%%, Very High: >70%%).
-2. Identify the top 2-3 factors with the highest **contribution percentages**.
+2. From only the factors that **increase risk (positive SHAP value)**, identify the top 1-3 with the highest contribution percentages.
 
 ### 'features'
 An array of explanations for each feature
@@ -323,7 +323,7 @@ An array of explanations for each feature
 ### Example 3: Summary
 **Input Data**: Overall Risk = 65%%, Top factors: BMI (25.0%%), is_bloodline (18.0%%)
 **Expected Output**:
-"summary": "Berdasarkan analisis data, risiko diabetes Anda adalah 65.0%% yang tergolong tinggi. Faktor utama yang berkontribusi terhadap risiko ini adalah Indeks Massa Tubuh (25.0%%) dan Riwayat Keluarga (18.0%%)."
+"summary": "Berdasarkan analisis data, risiko diabetes Anda adalah 65.0%% yang tergolong tinggi. Faktor utama yang mendorong kenaikan risiko ini adalah indeks massa tubuh (25.0%%) dan riwayat keluarga (18.0%%)."
 
 `, featureTable, globalImportanceExplanation)
 
