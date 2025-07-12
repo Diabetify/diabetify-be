@@ -53,12 +53,13 @@ type ChatCompletionResponse struct {
 }
 
 type FactorExplanation struct {
-	Factor       string  `json:"factor"`
-	Value        string  `json:"value"`
-	Impact       string  `json:"impact"`
-	Shap         float64 `json:"shap"`
-	Contribution float64 `json:"contribution"`
-	Explanation  string  `json:"explanation"`
+	Factor              string  `json:"factor"`
+	Value               string  `json:"value"`
+	Impact              string  `json:"impact"`
+	Shap                float64 `json:"shap"`
+	Contribution        float64 `json:"contribution"`
+	ContributionPercent string  `json:"contribution_percent"`
+	Explanation         string  `json:"explanation"`
 }
 
 type PredictionExplanationResponse struct {
@@ -103,7 +104,7 @@ func getFeatureDefinitions() map[string]FeatureInfo {
 		"smoking_status": {
 			Name:        "smoking_status",
 			Alias:       "Status Merokok",
-			Description: "User's smoking status: 0=Never smoked, 1=Former smoker, 2=Current smoker.",
+			Description: "User's smoking status: 0=Never smoked, 1=Former smoker, 2=Active smoker.",
 		},
 		"is_macrosomic_baby": {
 			Name:        "is_macrosomic_baby",
@@ -113,7 +114,7 @@ func getFeatureDefinitions() map[string]FeatureInfo {
 		"brinkman_score": {
 			Name:        "brinkman_score",
 			Alias:       "Indeks Brinkman",
-			Description: "Measures lifetime tobacco exposure: 0=Never smoked, 1=Mild smoker, 2=Moderate smoker, 3=Heavy smoker.",
+			Description: "Measures lifetime tobacco exposure, represented as a categorized value: 0=Never smoked, 1=Mild smoker, 2=Moderate smoker, 3=Heavy smoker. This is a preprocessed category, not the raw Brinkman Index.",
 		},
 		"is_cholesterol": {
 			Name:        "is_cholesterol",
@@ -204,21 +205,34 @@ func (c *Client) GeneratePredictionExplanation(ctx context.Context, prediction f
 	}
 
 	var shapTable strings.Builder
-	shapTable.WriteString("| Feature Name | Input Value | SHAP Value |\n")
-	shapTable.WriteString("|--------------|-------------|------------|\n")
+	shapTable.WriteString("| Feature Name | Input Value | SHAP Value | Contribution % |\n")
+	shapTable.WriteString("|--------------|-------------|------------|----------------|\n")
 	for factor, details := range factors {
-		shapTable.WriteString(fmt.Sprintf("| %s | %s | %.6f |\n",
-			factor, details.Value, details.Shap))
+		shapTable.WriteString(fmt.Sprintf("| %s | %s | %.6f | %.1f%% |\n",
+			factor, details.Value, details.Shap, details.Contribution*100))
 	}
 
+	diabetesRiskPercentage := prediction * 100
+
 	systemPrompt := fmt.Sprintf(`# Diabetes Prediction Explanation System
-	
+    
 ## 1. KNOWLEDGE SOURCE CONTEXT
 ### SHAP Value Interpretation
 - **SHAP (SHapley Additive exPlanations)**: A method for explaining machine learning model outputs
 - **Positive SHAP values (>0)**: Feature increases diabetes risk for this individual
 - **Negative SHAP values (<0)**: Feature decreases diabetes risk for this individual
-- **Magnitude**: Larger absolute values indicate stronger influence on the prediction
+
+### Contribution Percentage Interpretation
+- **Contribution Percentage**: Shows how much each feature contributes to the prediction
+- **How it's calculated**: Contribution percentage for factor X = (|SHAP value X| / Σ|SHAP value i|) x 100%
+- **Disclaimer**: The total of all feature contribution percentages does not represent the overall diabetes risk percentage. This is because SHAP explanations are based on additive contributions around a base value (model output mean), which is not included in this percentage calculation.
+
+### Overall Diabetes Risk Percentage
+- **Overall Risk Percentage**: Represents the model's prediction of diabetes risk for the user
+- **Very High Risk**: Above 70%
+- **High Risk**: 55% - 70%
+- **Moderate Risk**: 35% - 55%
+- **Low Risk**: Below 35%
 
 ### Feature Knowledge Base
 The diabetes prediction model uses the following features with their clinical significance:
@@ -226,13 +240,7 @@ The diabetes prediction model uses the following features with their clinical si
 %s
 
 ### Global Feature Impact Analysis
-The image provided shows the global SHAP value distribution for each feature across the entire dataset. This chart demonstrates:
-- **Feature value ranges**: Color gradient (blue to red) indicates low to high values
-- **SHAP impact patterns**: How feature values affect diabetes risk
-- **Risk contribution trends**: Positive SHAP = increased risk; negative SHAP = decreased risk
-- **Feature importance**: Wider SHAP spread = greater impact on prediction
-- **Value-specific effects**: Colors reveal how specific values relate to risk changes
-
+The image provided shows the global SHAP value distribution for each feature across the entire dataset.
 Use this chart to understand how the user's specific feature values compare to the global patterns and explain why their values contribute to risk increase or decrease.
 
 ## 2. HOW TO ACT:
@@ -250,9 +258,11 @@ Use this chart to understand how the user's specific feature values compare to t
 - Focus on **what the data shows** rather than medical interpretations
 - Describe **data patterns and correlations** objectively
 - Reference the global SHAP patterns shown in the chart to explain individual predictions
+- **Include contribution percentages** to show how much each factor affects the overall risk
+- **Mention the overall diabetes risk percentage** in the summary
 
 ## 3. GENERAL REQUEST:
-Your primary task is to generate personalized explanations for diabetes risk predictions based on SHAP values.
+Your primary task is to generate personalized explanations for diabetes risk predictions based on SHAP values and contribution percentages.
 
 ## 4. OUTPUT FORMAT:
 ### JSON Structure Requirements
@@ -270,14 +280,18 @@ The output must be a **valid JSON object** with the following structure:
 }
 
 ### Field Specifications
-- **'summary'**: A concise 2-sentence summary explaining the overall diabetes risk based on SHAP analysis
+- **'summary'**: A concise 2-sentence summary explaining the overall diabetes risk percentage and the main contributing factors
 - **'features'**: Array containing explanations for each feature
   - **'feature_name'**: Use the original feature name (e.g., "age", "bmi", "is_hypertension"), NOT the Indonesian alias
-  - **'explanation'**: Two-sentence explanation following the specified structure
+  - **'explanation'**: Two-sentence explanation following the specified structure, including contribution percentage
 
 ### Explanation Structure Rules
-- **Sentence 1**: State the user's specific value and its directional impact (increase/decrease) on diabetes risk prediction
+- **Sentence 1**: State the **user's specific value**, its **directional impact** (increase/decrease) on diabetes risk prediction, **how much it contributes** (in percentage), and **how strong the impact** is (e.g., slight, moderate, or strong)
 - **Sentence 2**: Explain why this occurs by describing the general statistical relationship between the feature and diabetes risk using natural, contrastive language
+
+### Summary Structure Rules
+- **Sentence 1**: State the overall diabetes risk percentage and whether it's very high, high, moderate, or low risk
+- **Sentence 2**: Mention the most significant contributing factors (highest absolute contribution percentages)
 
 ### Formatting Rules
 - **No markdown code blocks** around the JSON output
@@ -286,14 +300,19 @@ The output must be a **valid JSON object** with the following structure:
 
 ## 5. FEW-SHOT EXAMPLES
 ### Example 1: High BMI Impact
-**Input Data**: BMI = 28.5, SHAP value = +0.30
+**Input Data**: BMI = 28.5, SHAP value = +0.30, Contribution = 15.5%, Overall Risk = 75%
 **Expected Output**: 
-"explanation": "BMI Anda yang tinggi (28.5) secara signifikan meningkatkan risiko diabetes Anda. BMI yang tinggi cenderung meningkatkan risiko diabetes, sedangkan BMI yang normal cenderung menurunkan risiko diabetes.
+"explanation": "BMI Anda yang tinggi (28.5) secara signifikan meningkatkan risiko diabetes Anda sebesar 15.5%%. BMI yang tinggi cenderung meningkatkan risiko diabetes, sedangkan BMI yang normal cenderung menurunkan risiko diabetes."
 
 ### Example 2: Young Age Factor
-**Input Data**: Age = 25, SHAP value = -0.10
+**Input Data**: Age = 25, SHAP value = -0.10, Contribution = -8.2%, Overall Risk = 30%
 **Expected Output**:
-"explanation": "Usia muda Anda (25 tahun) menurunkan risiko diabetes Anda. Usia muda cenderung menurunkan risiko diabetes, sedangkan usia tua cenderung meningkatkan risiko diabetes."
+"explanation": "Usia muda Anda (25 tahun) menurunkan risiko diabetes Anda sebesar 8.2%%. Usia muda cenderung menurunkan risiko diabetes, sedangkan usia tua cenderung meningkatkan risiko diabetes."
+
+### Example 3: Summary
+**Input Data**: Overall Risk = 65%
+**Expected Output**:
+"summary": "Berdasarkan analisis data Anda, risiko diabetes Anda adalah 65%% yang tergolong tinggi. Faktor yang paling berkontribusi terhadap risiko ini adalah BMI tinggi (15.5%%) dan riwayat keluarga diabetes (12.3%%)."
 
 ## 6. IMPORTANT GUIDELINES
 ### Technical Requirements
@@ -302,11 +321,14 @@ The output must be a **valid JSON object** with the following structure:
 - **Chart Understanding**: While you should not mention the chart explicitly, use your understanding of the global SHAP patterns to inform your explanations
 `, featureTable)
 
-	userPrompt := fmt.Sprintf(`Please analyze this user's diabetes prediction with the following SHAP values:
+	userPrompt := fmt.Sprintf(`Please analyze this user's diabetes prediction with the following data:
 
+Overall Diabetes Risk: %.1f%%
+
+Feature Analysis:
 %s
 
-Provide explanations for each feature's contribution to the prediction.`, shapTable.String())
+Provide explanations for each feature's contribution to the prediction, including their contribution percentages.`, diabetesRiskPercentage, shapTable.String())
 
 	messages := []ChatMessage{
 		{
@@ -339,7 +361,7 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 		Model:       "gpt-4o",
 		Messages:    messages,
 		Temperature: 0.3,
-		MaxTokens:   3000,
+		MaxTokens:   5000,
 	}
 
 	jsonData, err := json.Marshal(req)
@@ -382,16 +404,17 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 		return nil, "", TokenUsage{}, fmt.Errorf("no completion choices returned")
 	}
 
-	content := result.Choices[0].Message.Content
-
 	tokenUsage := TokenUsage{
 		PromptTokens:     result.Usage.PromptTokens,
 		CompletionTokens: result.Usage.CompletionTokens,
 		TotalTokens:      result.Usage.TotalTokens,
 	}
 
+	content := result.Choices[0].Message.Content
+	cleanContent := cleanJSONResponse(content)
+
 	var predictionResponse PredictionExplanationResponse
-	if err := json.Unmarshal([]byte(content), &predictionResponse); err != nil {
+	if err := json.Unmarshal([]byte(cleanContent), &predictionResponse); err != nil {
 		return nil, "", tokenUsage, fmt.Errorf("failed to parse JSON response: %v", err)
 	}
 
@@ -422,12 +445,13 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 
 		if found {
 			explanations[actualFeatureName] = FactorExplanation{
-				Factor:       actualFeatureName,
-				Value:        details.Value,
-				Impact:       fmt.Sprintf("%.6f", details.Impact),
-				Shap:         details.Shap,
-				Contribution: details.Contribution,
-				Explanation:  feature.Explanation,
+				Factor:              actualFeatureName,
+				Value:               details.Value,
+				Impact:              fmt.Sprintf("%.6f", details.Impact),
+				Shap:                details.Shap,
+				Contribution:        details.Contribution,
+				ContributionPercent: fmt.Sprintf("%.2f%%", details.Contribution*100),
+				Explanation:         feature.Explanation,
 			}
 		}
 	}
@@ -437,4 +461,22 @@ Provide explanations for each feature's contribution to the prediction.`, shapTa
 	}
 
 	return explanations, predictionResponse.Summary, tokenUsage, nil
+}
+
+func cleanJSONResponse(content string) string {
+	content = strings.TrimSpace(content)
+
+	if strings.HasPrefix(content, "```json") {
+		content = strings.TrimPrefix(content, "```json")
+	}
+	if strings.HasPrefix(content, "```") {
+		content = strings.TrimPrefix(content, "```")
+	}
+	if strings.HasSuffix(content, "```") {
+		content = strings.TrimSuffix(content, "```")
+	}
+
+	content = strings.TrimSpace(content)
+
+	return content
 }
