@@ -160,13 +160,13 @@ func getAliasToFeatureMapping() map[string]string {
 
 func buildFeatureTable(features map[string]FeatureInfo, factorKeys []string) string {
 	var table strings.Builder
-	table.WriteString("| Feature Name | Feature Alias | Feature Description | Global Importance Insight |\n")
-	table.WriteString("|--------------|---------------|---------------------|---------------------------|\n")
+	table.WriteString("| Feature Name | Feature Alias | Feature Description |\n")
+	table.WriteString("|--------------|---------------|---------------------|\n")
 
 	for _, factor := range factorKeys {
 		if info, exists := features[factor]; exists {
-			table.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
-				info.Name, info.Alias, info.Description, info.GlobalImportanceInsight))
+			table.WriteString(fmt.Sprintf("| %s | %s | %s |\n",
+				info.Name, info.Alias, info.Description))
 		}
 	}
 
@@ -268,7 +268,7 @@ The following table defines the features used in the model. Use the "Feature Ali
 %s
 
 ### D. Global Feature Importance
-The following table summarizes the global feature importance insights based on the entire dataset. Use these insights to explain how each feature typically influences diabetes risk.
+The following list summarizes the global feature importance insights based on the entire dataset. Use these insights to explain how each feature typically influences diabetes risk.
 %s
 
 ---
@@ -302,7 +302,7 @@ An array of explanations for each feature
     - For categorical values (0, 1, 2), use the human-readable label (e.g., "pernah merokok" instead of "1").
     - **CORRECT PHRASING**: "...berkontribusi sebesar [Contribution %%] dari total pengaruh semua faktor."
     - **INCORRECT PHRASING**: "...menaikkan risiko Anda sebesar [Contribution %%]."
-  - **Sentence 2**: Explain the general relationship between this feature and diabetes risk.  
+  - **Sentence 2**: Explain the general relationship between this feature and diabetes risk using the **Global Feature Importance** information.
   	Start by describing how the user's value (e.g., low/high/certain category) typically affects the risk,  
   	then contrast it with how the **opposite value or category** affects the risk.  
 
