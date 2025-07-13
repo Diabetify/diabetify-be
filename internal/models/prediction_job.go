@@ -10,6 +10,7 @@ type PredictionJob struct {
 	ID           string         `gorm:"primaryKey;type:varchar(36)" json:"id"`
 	UserID       uint           `gorm:"not null;index" json:"user_id"`
 	Status       string         `gorm:"type:varchar(20);not null;default:'pending';index" json:"status"`
+	IsWhatIf     bool           `json:"is_what_if"`
 	PredictionID *uint          `gorm:"index" json:"prediction_id,omitempty"`
 	ErrorMessage *string        `gorm:"type:text" json:"error_message,omitempty"`
 	CreatedAt    time.Time      `gorm:"index" json:"created_at"`

@@ -153,6 +153,7 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		ID:        jobID,
 		UserID:    userID.(uint),
 		Status:    models.JobStatusPending,
+		IsWhatIf:  false,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -248,6 +249,7 @@ func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
 		ID:        jobID,
 		UserID:    userID.(uint),
 		Status:    models.JobStatusPending,
+		IsWhatIf:  true,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -449,7 +451,43 @@ func (pc *PredictionController) GetJobResult(c *gin.Context) {
 		})
 		return
 	}
+	if job.IsWhatIf {
+		whatIfResult, exists, err := pc.jobWorker.GetWhatIfResult(jobID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to retrieve what-if result",
+				"error":   err.Error(),
+			})
+			return
+		}
 
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "What-if result has expired or not found",
+				"help":    "What-if results are only available for 1 hours after completion",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "What-if prediction result retrieved successfully",
+			"data":    whatIfResult,
+		})
+		return
+
+	} else {
+		// ===== REGULAR PREDICTION FROM DATABASE =====
+		if job.PredictionID == nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Job completed but no result found",
+			})
+			return
+		}
+	}
 	// Check if result exists
 	if job.PredictionID == nil {
 		c.JSON(http.StatusNotFound, gin.H{

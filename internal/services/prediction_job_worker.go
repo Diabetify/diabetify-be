@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"diabetify/internal/cache"
 	"diabetify/internal/ml"
 	"diabetify/internal/models"
 	"diabetify/internal/repository"
@@ -40,6 +41,7 @@ type PredictionJobWorker struct {
 	// Configuration
 	maxJobTimeout   time.Duration
 	cleanupInterval time.Duration
+	redisClient     *cache.RedisClient
 }
 
 func NewPredictionJobWorker(
@@ -54,6 +56,11 @@ func NewPredictionJobWorker(
 	if workerCount <= 0 {
 		workerCount = 3
 	}
+	redisClient, err := cache.NewRedisClient()
+	if err != nil {
+		// Log error but don't fail - fallback to no caching
+		fmt.Printf("Warning: Failed to connect to Redis: %v\n", err)
+	}
 
 	return &PredictionJobWorker{
 		jobRepo:         jobRepo,
@@ -67,6 +74,7 @@ func NewPredictionJobWorker(
 		stopChan:        make(chan struct{}),
 		maxJobTimeout:   30 * time.Second,
 		cleanupInterval: 30 * time.Minute,
+		redisClient:     redisClient,
 	}
 }
 
@@ -168,6 +176,10 @@ func (w *PredictionJobWorker) Stop() {
 	}
 	w.running = false
 	w.mu.Unlock()
+
+	if w.redisClient != nil {
+		w.redisClient.Close()
+	}
 
 	// Close RabbitMQ connection
 	if w.responseChannel != nil {
@@ -281,10 +293,36 @@ func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 	// Convert response
 	modelResponse := convertToModelsResponse(rabbitResponse)
 
-	// Extract feature info from ML response (no DB queries!)
+	if w.isWhatIfJob(jobID) {
+		// ===== STORE WHAT-IF RESULT IN REDIS =====
+		featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse)
+
+		whatIfResult := map[string]interface{}{
+			"job_id":               jobID,
+			"job_type":             "what_if",
+			"risk_score":           modelResponse.Prediction,
+			"risk_percentage":      modelResponse.Prediction * 100,
+			"user_data_used":       featureInfo,
+			"feature_explanations": w.buildFeatureExplanations(modelResponse),
+			"timestamp":            time.Now(),
+			"processing_time":      time.Since(job.CreatedAt).String(),
+		}
+
+		// Store in Redis
+		if err := w.storeWhatIfResult(jobID, whatIfResult); err != nil {
+			fmt.Printf("Warning: Failed to store what-if result in Redis: %v\n", err)
+		}
+
+		// Complete job (no prediction ID)
+		_ = w.jobRepo.UpdateJobStatus(jobID, "completed", nil)
+		return
+	}
+
+	// ===== REGULAR PREDICTION - SAVE TO DATABASE =====
+	// Extract feature info from ML response (only for regular predictions)
 	featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse)
 
-	// Create and save prediction
+	// Create and save prediction (only regular predictions)
 	prediction := w.createPredictionRecord(job.UserID, modelResponse, featureInfo)
 	if err := w.predRepo.SavePrediction(prediction); err != nil {
 		errMsg := fmt.Sprintf("Failed to save prediction: %v", err)
@@ -292,12 +330,52 @@ func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 		return
 	}
 
-	// Update user timestamp
+	// Update user timestamp (only for regular predictions)
 	now := time.Now()
 	_ = w.userRepo.UpdateLastPredictionTime(job.UserID, &now)
 
 	// Complete the job
-	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, models.JobStatusCompleted, prediction.ID)
+	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, "completed", prediction.ID)
+}
+func (w *PredictionJobWorker) buildFeatureExplanations(response *models.PredictionResponse) map[string]map[string]interface{} {
+	featureExplanations := make(map[string]map[string]interface{})
+
+	features := []struct {
+		name string
+		key  string
+	}{
+		{"age", "age"},
+		{"BMI", "BMI"},
+		{"brinkman_index", "brinkman_index"},
+		{"is_hypertension", "is_hypertension"},
+		{"is_cholesterol", "is_cholesterol"},
+		{"is_bloodline", "is_bloodline"},
+		{"is_macrosomic_baby", "is_macrosomic_baby"},
+		{"smoking_status", "smoking_status"},
+		{"moderate_physical_activity_frequency", "moderate_physical_activity_frequency"},
+	}
+
+	for _, feature := range features {
+		if exp, exists := response.Explanation[feature.key]; exists {
+			featureExplanations[feature.name] = map[string]interface{}{
+				"shap":         exp.Shap,
+				"contribution": exp.Contribution,
+				"impact":       exp.Impact,
+			}
+		}
+	}
+
+	return featureExplanations
+}
+
+// Add this helper method
+func (w *PredictionJobWorker) isWhatIfJob(jobID string) bool {
+	job, err := w.jobRepo.GetJobByID(jobID)
+	if err != nil {
+		return false
+	}
+
+	return job.IsWhatIf
 }
 func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse) map[string]interface{} {
 	featureInfo := make(map[string]interface{})
@@ -565,6 +643,23 @@ func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *mode
 		PhysicalActivityFrequencyContribution: activityContribution,
 		PhysicalActivityFrequencyImpact:       activityImpact,
 	}
+}
+
+// ========== REDIS CACHE UTILITIES (unchanged) ==========
+func (w *PredictionJobWorker) storeWhatIfResult(jobID string, result map[string]interface{}) error {
+	if w.redisClient == nil {
+		return fmt.Errorf("Redis client not available")
+	}
+
+	// Store for 1 hours
+	return w.redisClient.StoreWhatIfResult(jobID, result, 1*time.Hour)
+}
+func (w *PredictionJobWorker) GetWhatIfResult(jobID string) (map[string]interface{}, bool, error) {
+	if w.redisClient == nil {
+		return nil, false, fmt.Errorf("Redis client not available")
+	}
+
+	return w.redisClient.GetWhatIfResult(jobID)
 }
 
 // ========== BACKGROUND ROUTINES (unchanged) ==========
