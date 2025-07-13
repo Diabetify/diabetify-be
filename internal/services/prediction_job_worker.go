@@ -303,7 +303,7 @@ func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitM
 	featureInfo := make(map[string]interface{})
 
 	for featureName, featureData := range response.Explanation {
-		if value, exists := featureData["value"]; exists {
+		if value, exists := featureData["value"]; exists && value != nil {
 			switch featureName {
 			case "age":
 				if ageFloat, ok := value.(float64); ok {
@@ -345,8 +345,36 @@ func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitM
 		}
 	}
 
+	// Set default values for missing features
 	if _, exists := featureInfo["avg_smoke_count"]; !exists {
 		featureInfo["avg_smoke_count"] = 0
+	}
+	if _, exists := featureInfo["age"]; !exists {
+		featureInfo["age"] = 0
+	}
+	if _, exists := featureInfo["smoking_status"]; !exists {
+		featureInfo["smoking_status"] = 0
+	}
+	if _, exists := featureInfo["is_cholesterol"]; !exists {
+		featureInfo["is_cholesterol"] = false
+	}
+	if _, exists := featureInfo["is_macrosomic_baby"]; !exists {
+		featureInfo["is_macrosomic_baby"] = 0
+	}
+	if _, exists := featureInfo["physical_activity_frequency"]; !exists {
+		featureInfo["physical_activity_frequency"] = 0
+	}
+	if _, exists := featureInfo["is_bloodline"]; !exists {
+		featureInfo["is_bloodline"] = false
+	}
+	if _, exists := featureInfo["brinkman_score"]; !exists {
+		featureInfo["brinkman_score"] = 0
+	}
+	if _, exists := featureInfo["bmi"]; !exists {
+		featureInfo["bmi"] = 0.0
+	}
+	if _, exists := featureInfo["is_hypertension"]; !exists {
+		featureInfo["is_hypertension"] = false
 	}
 
 	return featureInfo
@@ -438,6 +466,46 @@ func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *mode
 		return 0.0, 0.0, 0.0
 	}
 
+	// Helper functions with nil safety
+	getInt := func(key string) int {
+		if val, exists := featureInfo[key]; exists && val != nil {
+			if intVal, ok := val.(int); ok {
+				return intVal
+			}
+			if floatVal, ok := val.(float64); ok {
+				return int(floatVal)
+			}
+		}
+		return 0
+	}
+
+	getFloat := func(key string) float64 {
+		if val, exists := featureInfo[key]; exists && val != nil {
+			if floatVal, ok := val.(float64); ok {
+				return floatVal
+			}
+			if intVal, ok := val.(int); ok {
+				return float64(intVal)
+			}
+		}
+		return 0.0
+	}
+
+	getBool := func(key string) bool {
+		if val, exists := featureInfo[key]; exists && val != nil {
+			if boolVal, ok := val.(bool); ok {
+				return boolVal
+			}
+			if floatVal, ok := val.(float64); ok {
+				return floatVal == 1.0
+			}
+			if intVal, ok := val.(int); ok {
+				return intVal == 1
+			}
+		}
+		return false
+	}
+
 	ageShap, ageContribution, ageImpact := getExplanation("age")
 	bmiShap, bmiContribution, bmiImpact := getExplanation("BMI")
 	brinkmanShap, brinkmanContribution, brinkmanImpact := getExplanation("brinkman_index")
@@ -452,47 +520,47 @@ func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *mode
 		UserID:    userID,
 		RiskScore: response.Prediction,
 
-		Age:             featureInfo["age"].(int),
+		Age:             getInt("age"),
 		AgeShap:         ageShap,
 		AgeContribution: ageContribution,
 		AgeImpact:       ageImpact,
 
-		BMI:             featureInfo["bmi"].(float64),
+		BMI:             getFloat("bmi"),
 		BMIShap:         bmiShap,
 		BMIContribution: bmiContribution,
 		BMIImpact:       bmiImpact,
 
-		BrinkmanScore:             featureInfo["brinkman_score"].(int),
+		BrinkmanScore:             getInt("brinkman_score"),
 		BrinkmanScoreShap:         brinkmanShap,
 		BrinkmanScoreContribution: brinkmanContribution,
 		BrinkmanScoreImpact:       brinkmanImpact,
 
-		IsHypertension:             featureInfo["is_hypertension"].(bool),
+		IsHypertension:             getBool("is_hypertension"),
 		IsHypertensionShap:         hypertensionShap,
 		IsHypertensionContribution: hypertensionContribution,
 		IsHypertensionImpact:       hypertensionImpact,
 
-		IsCholesterol:             featureInfo["is_cholesterol"].(bool),
+		IsCholesterol:             getBool("is_cholesterol"),
 		IsCholesterolShap:         cholesterolShap,
 		IsCholesterolContribution: cholesterolContribution,
 		IsCholesterolImpact:       cholesterolImpact,
 
-		IsBloodline:             featureInfo["is_bloodline"].(bool),
+		IsBloodline:             getBool("is_bloodline"),
 		IsBloodlineShap:         bloodlineShap,
 		IsBloodlineContribution: bloodlineContribution,
 		IsBloodlineImpact:       bloodlineImpact,
 
-		IsMacrosomicBaby:             featureInfo["is_macrosomic_baby"].(int),
+		IsMacrosomicBaby:             getInt("is_macrosomic_baby"),
 		IsMacrosomicBabyShap:         macrosomicShap,
 		IsMacrosomicBabyContribution: macrosomicContribution,
 		IsMacrosomicBabyImpact:       macrosomicImpact,
 
-		SmokingStatus:             featureInfo["smoking_status"].(int),
+		SmokingStatus:             getInt("smoking_status"),
 		SmokingStatusShap:         smokingShap,
 		SmokingStatusContribution: smokingContribution,
 		SmokingStatusImpact:       smokingImpact,
 
-		PhysicalActivityFrequency:             featureInfo["physical_activity_frequency"].(int),
+		PhysicalActivityFrequency:             getInt("physical_activity_frequency"),
 		PhysicalActivityFrequencyShap:         activityShap,
 		PhysicalActivityFrequencyContribution: activityContribution,
 		PhysicalActivityFrequencyImpact:       activityImpact,
