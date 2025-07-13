@@ -297,7 +297,7 @@ func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 	_ = w.userRepo.UpdateLastPredictionTime(job.UserID, &now)
 
 	// Complete the job
-	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, "completed", prediction.ID)
+	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, models.JobStatusCompleted, prediction.ID)
 }
 func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse) map[string]interface{} {
 	featureInfo := make(map[string]interface{})

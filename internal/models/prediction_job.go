@@ -12,8 +12,6 @@ type PredictionJob struct {
 	Status       string         `gorm:"type:varchar(20);not null;default:'pending';index" json:"status"`
 	PredictionID *uint          `gorm:"index" json:"prediction_id,omitempty"`
 	ErrorMessage *string        `gorm:"type:text" json:"error_message,omitempty"`
-	Progress     int            `gorm:"default:0" json:"progress"`
-	Step         string         `gorm:"type:varchar(100)" json:"step,omitempty"`
 	CreatedAt    time.Time      `gorm:"index" json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
@@ -28,16 +26,10 @@ type PredictionJob struct {
 const (
 	JobStatusPending    = "pending"
 	JobStatusProcessing = "processing"
+	JobStatusSubmitted  = "submitted"
 	JobStatusCompleted  = "completed"
 	JobStatusFailed     = "failed"
 	JobStatusCancelled  = "cancelled"
-)
-
-// Job processing steps
-const (
-	JobStepValidatingProfile = "validating_profile"
-	JobStatusSubmitted       = "submitted"
-	JobStepCompleted         = "completed"
 )
 
 func (pj *PredictionJob) TableName() string {

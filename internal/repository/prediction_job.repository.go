@@ -17,7 +17,6 @@ type PredictionJobRepository interface {
 
 	// Status management
 	UpdateJobStatus(jobID, status string, errorMessage *string) error
-	UpdateJobProgress(jobID string, progress int, step string) error
 	UpdateJobStatusWithResult(jobID, status string, predictionID uint) error
 
 	// Query operations
@@ -71,7 +70,6 @@ func (r *predictionJobRepository) DeleteJob(jobID string) error {
 }
 
 // ========== STATUS MANAGEMENT ==========
-
 func (r *predictionJobRepository) UpdateJobStatus(jobID, status string, errorMessage *string) error {
 	updates := map[string]interface{}{
 		"status":     status,
@@ -83,33 +81,7 @@ func (r *predictionJobRepository) UpdateJobStatus(jobID, status string, errorMes
 	}
 
 	// Set completed_at if job is finished
-	if status == models.JobStatusCompleted || status == models.JobStatusFailed || status == models.JobStatusCancelled {
-		now := time.Now()
-		updates["completed_at"] = &now
-	}
-
-	result := r.db.Model(&models.PredictionJob{}).Where("id = ?", jobID).Updates(updates)
-	if result.Error != nil {
-		return result.Error
-	}
-
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("job with ID %s not found", jobID)
-	}
-
-	return nil
-}
-
-func (r *predictionJobRepository) UpdateJobProgress(jobID string, progress int, step string) error {
-	updates := map[string]interface{}{
-		"progress":   progress,
-		"step":       step,
-		"updated_at": time.Now(),
-	}
-
-	// If progress is 100, consider it completed
-	if progress >= 100 {
-		updates["status"] = models.JobStatusCompleted
+	if status == "completed" || status == "failed" || status == "cancelled" {
 		now := time.Now()
 		updates["completed_at"] = &now
 	}
@@ -130,8 +102,6 @@ func (r *predictionJobRepository) UpdateJobStatusWithResult(jobID, status string
 	updates := map[string]interface{}{
 		"status":        status,
 		"prediction_id": predictionID,
-		"progress":      100,
-		"step":          models.JobStepCompleted,
 		"updated_at":    time.Now(),
 	}
 

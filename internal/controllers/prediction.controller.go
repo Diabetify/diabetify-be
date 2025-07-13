@@ -153,8 +153,6 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		ID:        jobID,
 		UserID:    userID.(uint),
 		Status:    models.JobStatusPending,
-		Progress:  0,
-		Step:      models.JobStepValidatingProfile,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -250,8 +248,6 @@ func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
 		ID:        jobID,
 		UserID:    userID.(uint),
 		Status:    models.JobStatusPending,
-		Progress:  0,
-		Step:      models.JobStepValidatingProfile,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -329,7 +325,6 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 		return
 	}
 
-	// Get job from database
 	job, err := pc.jobRepo.GetJobByID(jobID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -340,7 +335,6 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 		return
 	}
 
-	// Check if job belongs to user
 	if job.UserID != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status":  "error",
@@ -354,9 +348,7 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 		"message": "Job status retrieved successfully",
 		"data": gin.H{
 			"job_id":     job.ID,
-			"status":     job.Status,
-			"progress":   job.Progress,
-			"step":       job.Step,
+			"status":     job.Status, // Only status
 			"created_at": job.CreatedAt,
 			"updated_at": job.UpdatedAt,
 		},
@@ -364,16 +356,15 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 
 	// Add status-specific information
 	switch job.Status {
-	case models.JobStatusPending:
+	case "pending":
 		response["data"].(gin.H)["message"] = "Job is waiting to be processed"
-	case models.JobStatusProcessing:
+	case "processing":
 		response["data"].(gin.H)["message"] = "Job is being prepared for ML service"
-	case models.JobStatusSubmitted:
+	case "submitted":
 		response["data"].(gin.H)["message"] = "Job has been submitted to ML service and is being processed"
 		response["data"].(gin.H)["note"] = "This may take a few minutes. ML service will respond when ready."
-	case models.JobStatusCompleted:
+	case "completed":
 		response["data"].(gin.H)["message"] = "Job completed successfully"
-		// Include result if available
 		if job.PredictionID != nil {
 			prediction, err := pc.repo.GetPredictionByID(*job.PredictionID)
 			if err == nil {
@@ -385,7 +376,7 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 				}
 			}
 		}
-	case models.JobStatusFailed:
+	case "failed":
 		response["data"].(gin.H)["message"] = "Job failed"
 		if job.ErrorMessage != nil {
 			response["data"].(gin.H)["error"] = *job.ErrorMessage
@@ -453,9 +444,7 @@ func (pc *PredictionController) GetJobResult(c *gin.Context) {
 			"status":  "succcess",
 			"message": fmt.Sprintf("Job is not completed yet. Current status: %s", job.Status),
 			"current_status": gin.H{
-				"status":   job.Status,
-				"progress": job.Progress,
-				"step":     job.Step,
+				"status": job.Status,
 			},
 		})
 		return
