@@ -33,15 +33,12 @@ type PredictionJobWorker struct {
 	running     bool
 	mu          sync.RWMutex
 
-	// RabbitMQ for async responses
+	// RabbitMQ for ML responses (separate handler)
 	conn            *amqp.Connection
 	responseChannel *amqp.Channel
-	pendingJobs     map[string]chan *models.PredictionResponse
-	pendingJobsMu   sync.RWMutex
 
 	// Configuration
 	maxJobTimeout   time.Duration
-	maxConcurrency  int
 	cleanupInterval time.Duration
 }
 
@@ -55,7 +52,7 @@ func NewPredictionJobWorker(
 	workerCount int,
 ) *PredictionJobWorker {
 	if workerCount <= 0 {
-		workerCount = 3 // Default worker count
+		workerCount = 3
 	}
 
 	return &PredictionJobWorker{
@@ -65,12 +62,10 @@ func NewPredictionJobWorker(
 		profileRepo:     profileRepo,
 		activityRepo:    activityRepo,
 		mlClient:        mlClient,
-		jobQueue:        make(chan models.PredictionJobRequest, 100),
+		jobQueue:        make(chan models.PredictionJobRequest, 2000),
 		workerCount:     workerCount,
 		stopChan:        make(chan struct{}),
-		pendingJobs:     make(map[string]chan *models.PredictionResponse),
-		maxJobTimeout:   5 * time.Minute,
-		maxConcurrency:  10,
+		maxJobTimeout:   30 * time.Second,
 		cleanupInterval: 30 * time.Minute,
 	}
 }
@@ -148,16 +143,15 @@ func (w *PredictionJobWorker) Start() {
 	w.running = true
 	w.mu.Unlock()
 
-	// Setup RabbitMQ response consumer, ignoring error as in original logic
-	_ = w.setupRabbitMQConsumer()
+	// Setup RabbitMQ response handler (separate from job processing)
+	_ = w.setupRabbitMQResponseHandler()
 
-	// Start worker goroutines
+	// Start worker goroutines for job processing
 	for i := 0; i < w.workerCount; i++ {
 		w.wg.Add(1)
 		go w.worker(i)
 	}
-
-	// Start job recovery routine (process any pending jobs from database)
+	// Start job recovery routine
 	w.wg.Add(1)
 	go w.recoverPendingJobs()
 
@@ -187,8 +181,7 @@ func (w *PredictionJobWorker) Stop() {
 	w.wg.Wait()
 }
 
-// ========== RABBITMQ SETUP ==========
-func (w *PredictionJobWorker) setupRabbitMQConsumer() error {
+func (w *PredictionJobWorker) setupRabbitMQResponseHandler() error {
 	// Connect to RabbitMQ
 	var err error
 	w.conn, err = amqp.Dial("amqp://admin:password123@localhost:5672/")
@@ -214,10 +207,10 @@ func (w *PredictionJobWorker) setupRabbitMQConsumer() error {
 		return fmt.Errorf("failed to declare queue: %v", err)
 	}
 
-	// Start consuming responses - THIS IS THE ONLY CONSUMER NOW
+	// Start consuming responses
 	msgs, err := w.responseChannel.Consume(
 		"ml.prediction.hybrid_response", // queue
-		"unified_consumer",              // consumer - unique tag
+		"response_handler",              // consumer
 		false,                           // auto-ack
 		false,                           // exclusive
 		false,                           // no-local
@@ -228,14 +221,15 @@ func (w *PredictionJobWorker) setupRabbitMQConsumer() error {
 		return fmt.Errorf("failed to register consumer: %v", err)
 	}
 
-	// Start unified response handler
+	// Start response handler (independent of job workers)
 	w.wg.Add(1)
-	go w.handleResponses(msgs)
+	go w.handleMLResponses(msgs)
 
 	return nil
 }
 
-func (w *PredictionJobWorker) handleResponses(msgs <-chan amqp.Delivery) {
+// handleMLResponses processes ML responses independently of job submission
+func (w *PredictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 	defer w.wg.Done()
 
 	for {
@@ -247,49 +241,116 @@ func (w *PredictionJobWorker) handleResponses(msgs <-chan amqp.Delivery) {
 				return
 			}
 
-			correlationID := msg.CorrelationId
-
+			// Parse response
 			var rabbitResponse RabbitMQPredictionResponse
 			if err := json.Unmarshal(msg.Body, &rabbitResponse); err != nil {
 				msg.Nack(false, false)
 				continue
 			}
 
-			modelResponse := convertToModelsResponse(&rabbitResponse)
+			// Handle the response (fire-and-forget completion)
+			w.handleSingleMLResponse(&rabbitResponse)
 
-			delivered := false
-
-			if hybridClient, ok := w.mlClient.(interface {
-				DeliverResponse(correlationID string, response *models.PredictionResponse) bool
-			}); ok {
-				if hybridClient.DeliverResponse(correlationID, modelResponse) {
-					delivered = true
-				}
-			}
-
-			if !delivered {
-				w.pendingJobsMu.Lock()
-				localResponseChan, exists := w.pendingJobs[correlationID]
-				if exists {
-					delete(w.pendingJobs, correlationID)
-					w.pendingJobsMu.Unlock()
-
-					select {
-					case localResponseChan <- modelResponse:
-						delivered = true
-					case <-time.After(2 * time.Second):
-						// Timeout, delivered remains false
-					}
-				} else {
-					w.pendingJobsMu.Unlock()
-				}
-			}
-
+			// Acknowledge message
 			_ = msg.Ack(false)
 		}
 	}
 }
 
+// handleSingleMLResponse processes a single ML response
+func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPredictionResponse) {
+	jobID := rabbitResponse.CorrelationID
+
+	// Check if job exists and is in submitted state
+	job, err := w.jobRepo.GetJobByID(jobID)
+	if err != nil {
+		return
+	}
+
+	if job.Status != "submitted" {
+		return
+	}
+
+	// Handle error response
+	if rabbitResponse.Error != nil {
+		errMsg := *rabbitResponse.Error
+		_ = w.jobRepo.UpdateJobStatus(jobID, "failed", &errMsg)
+		return
+	}
+
+	// Convert response
+	modelResponse := convertToModelsResponse(rabbitResponse)
+
+	// Extract feature info from ML response (no DB queries!)
+	featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse)
+
+	// Create and save prediction
+	prediction := w.createPredictionRecord(job.UserID, modelResponse, featureInfo)
+	if err := w.predRepo.SavePrediction(prediction); err != nil {
+		errMsg := fmt.Sprintf("Failed to save prediction: %v", err)
+		_ = w.jobRepo.UpdateJobStatus(jobID, "failed", &errMsg)
+		return
+	}
+
+	// Update user timestamp
+	now := time.Now()
+	_ = w.userRepo.UpdateLastPredictionTime(job.UserID, &now)
+
+	// Complete the job
+	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, "completed", prediction.ID)
+}
+func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse) map[string]interface{} {
+	featureInfo := make(map[string]interface{})
+
+	for featureName, featureData := range response.Explanation {
+		if value, exists := featureData["value"]; exists {
+			switch featureName {
+			case "age":
+				if ageFloat, ok := value.(float64); ok {
+					featureInfo["age"] = int(ageFloat)
+				}
+			case "smoking_status":
+				if smokingFloat, ok := value.(float64); ok {
+					featureInfo["smoking_status"] = int(smokingFloat)
+				}
+			case "is_cholesterol":
+				if cholesterolFloat, ok := value.(float64); ok {
+					featureInfo["is_cholesterol"] = cholesterolFloat == 1.0
+				}
+			case "is_macrosomic_baby":
+				if macrosomicFloat, ok := value.(float64); ok {
+					featureInfo["is_macrosomic_baby"] = int(macrosomicFloat)
+				}
+			case "moderate_physical_activity_frequency":
+				if activityFloat, ok := value.(float64); ok {
+					featureInfo["physical_activity_frequency"] = int(activityFloat)
+				}
+			case "is_bloodline":
+				if bloodlineFloat, ok := value.(float64); ok {
+					featureInfo["is_bloodline"] = bloodlineFloat == 1.0
+				}
+			case "brinkman_index":
+				if brinkmanFloat, ok := value.(float64); ok {
+					featureInfo["brinkman_score"] = int(brinkmanFloat)
+				}
+			case "BMI":
+				if bmiFloat, ok := value.(float64); ok {
+					featureInfo["bmi"] = bmiFloat
+				}
+			case "is_hypertension":
+				if hypertensionFloat, ok := value.(float64); ok {
+					featureInfo["is_hypertension"] = hypertensionFloat == 1.0
+				}
+			}
+		}
+	}
+
+	if _, exists := featureInfo["avg_smoke_count"]; !exists {
+		featureInfo["avg_smoke_count"] = 0
+	}
+
+	return featureInfo
+}
 func (w *PredictionJobWorker) SubmitJob(jobRequest models.PredictionJobRequest) error {
 	w.mu.RLock()
 	if !w.running {
@@ -297,15 +358,6 @@ func (w *PredictionJobWorker) SubmitJob(jobRequest models.PredictionJobRequest) 
 		return fmt.Errorf("job worker is not running")
 	}
 	w.mu.RUnlock()
-
-	activeJobs, err := w.jobRepo.GetActiveJobsCount(jobRequest.UserID)
-	if err != nil {
-		return fmt.Errorf("failed to check active jobs: %w", err)
-	}
-
-	if activeJobs >= int64(w.maxConcurrency) {
-		return fmt.Errorf("user has too many active jobs (%d/%d)", activeJobs, w.maxConcurrency)
-	}
 
 	select {
 	case w.jobQueue <- jobRequest:
@@ -315,7 +367,7 @@ func (w *PredictionJobWorker) SubmitJob(jobRequest models.PredictionJobRequest) 
 	}
 }
 
-// ========== WORKER IMPLEMENTATION ==========
+// ========== FIRE-AND-FORGET JOB WORKER ==========
 
 func (w *PredictionJobWorker) worker(workerID int) {
 	defer w.wg.Done()
@@ -325,24 +377,20 @@ func (w *PredictionJobWorker) worker(workerID int) {
 		case <-w.stopChan:
 			return
 		case jobRequest := <-w.jobQueue:
-			w.processJob(jobRequest)
+			w.processJobFireAndForget(jobRequest)
 		}
 	}
 }
 
-func (w *PredictionJobWorker) processJob(jobRequest models.PredictionJobRequest) {
+// processJobFireAndForget implements true fire-and-forget pattern
+func (w *PredictionJobWorker) processJobFireAndForget(jobRequest models.PredictionJobRequest) {
 	jobID := jobRequest.JobID
 	userID := jobRequest.UserID
 
 	ctx, cancel := context.WithTimeout(context.Background(), w.maxJobTimeout)
 	defer cancel()
 
-	if err := w.jobRepo.UpdateJobStatus(jobID, models.JobStatusProcessing, nil); err != nil {
-		return
-	}
-
-	_ = w.jobRepo.UpdateJobProgress(jobID, 20, models.JobStepValidatingProfile)
-
+	// ===== COLLECT ALL DATA FIRST =====
 	user, err := w.userRepo.GetUserByID(userID)
 	if err != nil {
 		errMsg := fmt.Sprintf("User not found: %v", err)
@@ -357,85 +405,30 @@ func (w *PredictionJobWorker) processJob(jobRequest models.PredictionJobRequest)
 		return
 	}
 
-	_ = w.jobRepo.UpdateJobProgress(jobID, 40, models.JobStepCalculatingFeatures)
-
-	features, featureInfo, err := w.calculateFeaturesFromProfile(user, profile, userID, jobRequest.WhatIfInput)
+	features, _, err := w.calculateFeaturesFromProfile(user, profile, userID, jobRequest.WhatIfInput)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to calculate features: %v", err)
 		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
 		return
 	}
 
-	_ = w.jobRepo.UpdateJobProgress(jobID, 50, "Submitting to ML service")
+	// ===== SET TO PROCESSING =====
+	if err := w.jobRepo.UpdateJobStatus(jobID, models.JobStatusProcessing, nil); err != nil {
+		return
+	}
 
+	// ===== FIRE-AND-FORGET: SUBMIT TO ML SERVICE =====
 	correlationID := jobID
-
-	responseChan := make(chan *models.PredictionResponse, 1)
-	w.mlClient.RegisterPendingCall(correlationID, responseChan)
-
-	defer func() {
-		w.mlClient.UnregisterPendingCall(correlationID)
-		close(responseChan)
-	}()
-
-	submitCtx, submitCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer submitCancel()
-
-	if err := w.mlClient.PredictAsync(submitCtx, correlationID, features); err != nil {
+	if err := w.mlClient.PredictAsync(ctx, correlationID, features); err != nil {
 		errMsg := fmt.Sprintf("Failed to submit to ML service: %v", err)
 		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
 		return
 	}
 
-	_ = w.jobRepo.UpdateJobProgress(jobID, 60, "Waiting for ML service response")
-
-	var response *models.PredictionResponse
-	progressTicker := time.NewTicker(3 * time.Second)
-	defer progressTicker.Stop()
-	progress := 60
-
-	for {
-		select {
-		case <-ctx.Done():
-			errMsg := fmt.Sprintf("Timeout waiting for ML response: %v", ctx.Err())
-			w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
-			return
-
-		case response = <-responseChan:
-			if response != nil {
-				goto processResponse
-			}
-
-		case <-progressTicker.C:
-			if progress < 80 {
-				progress += 2
-				_ = w.jobRepo.UpdateJobProgress(jobID, progress, "Waiting for ML service response")
-			}
-		}
-	}
-
-processResponse:
-	_ = w.jobRepo.UpdateJobProgress(jobID, 90, models.JobStepSavingResults)
-
-	prediction := w.createPredictionRecord(userID, response, featureInfo)
-
-	if err := w.predRepo.SavePrediction(prediction); err != nil {
-		errMsg := fmt.Sprintf("Failed to save prediction: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
-		return
-	}
-
-	if jobRequest.WhatIfInput == nil {
-		now := time.Now()
-		_ = w.userRepo.UpdateLastPredictionTime(userID, &now)
-	}
-
-	if err := w.jobRepo.UpdateJobStatusWithResult(jobID, models.JobStatusCompleted, prediction.ID); err != nil {
-		return
-	}
+	_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusSubmitted, nil)
 }
 
-// ========== HELPER METHODS ==========
+// ========== HELPER METHODS (unchanged) ==========
 
 func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *models.PredictionResponse, featureInfo map[string]interface{}) *models.Prediction {
 	getExplanation := func(key string) (float64, float64, float64) {
@@ -506,7 +499,7 @@ func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *mode
 	}
 }
 
-// ========== BACKGROUND ROUTINES ==========
+// ========== BACKGROUND ROUTINES (unchanged) ==========
 
 func (w *PredictionJobWorker) recoverPendingJobs() {
 	defer w.wg.Done()
@@ -552,7 +545,7 @@ func (w *PredictionJobWorker) cleanupRoutine() {
 	}
 }
 
-// ========== FEATURE CALCULATION ==========
+// ========== FEATURE CALCULATION (unchanged) ==========
 
 func (w *PredictionJobWorker) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *models.WhatIfInput) ([]float64, map[string]interface{}, error) {
 	if user.DOB == nil {
@@ -831,19 +824,14 @@ func (w *PredictionJobWorker) GetStatus() map[string]interface{} {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	w.pendingJobsMu.RLock()
-	pendingCount := len(w.pendingJobs)
-	w.pendingJobsMu.RUnlock()
-
 	return map[string]interface{}{
 		"running":            w.running,
 		"worker_count":       w.workerCount,
 		"queue_size":         len(w.jobQueue),
 		"queue_capacity":     cap(w.jobQueue),
-		"pending_jobs":       pendingCount,
 		"max_job_timeout":    w.maxJobTimeout.String(),
-		"max_concurrency":    w.maxConcurrency,
 		"cleanup_interval":   w.cleanupInterval.String(),
 		"rabbitmq_connected": w.conn != nil && !w.conn.IsClosed(),
+		"pattern":            "fire_and_forget",
 	}
 }

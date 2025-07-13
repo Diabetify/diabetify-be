@@ -92,10 +92,9 @@ func (pc *PredictionController) TestMLConnection(c *gin.Context) {
 			"message":   "Async ML service is healthy via RabbitMQ",
 			"timestamp": time.Now(),
 			"details": gin.H{
-				"service_type":       "async_only",
-				"worker_status":      status,
-				"communication":      "rabbitmq",
-				"async_health_check": healthCheckStatus,
+				"worker_status": status,
+				"communication": "rabbitmq",
+				"health_check":  healthCheckStatus,
 			},
 		})
 		return
@@ -169,7 +168,6 @@ func (pc *PredictionController) MakePrediction(c *gin.Context) {
 		return
 	}
 
-	// Submit job to worker
 	jobRequest := models.PredictionJobRequest{
 		JobID:       jobID,
 		UserID:      userID.(uint),
@@ -267,7 +265,6 @@ func (pc *PredictionController) WhatIfPrediction(c *gin.Context) {
 		return
 	}
 
-	// Submit job to worker
 	jobRequest := models.PredictionJobRequest{
 		JobID:       jobID,
 		UserID:      userID.(uint),
@@ -365,22 +362,34 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 		},
 	}
 
-	// If job is completed, include result
-	if job.Status == models.JobStatusCompleted && job.PredictionID != nil {
-		prediction, err := pc.repo.GetPredictionByID(*job.PredictionID)
-		if err == nil {
-			response["data"].(gin.H)["result"] = gin.H{
-				"prediction_id":   prediction.ID,
-				"risk_score":      prediction.RiskScore,
-				"risk_percentage": prediction.RiskScore * 100,
-				"created_at":      prediction.CreatedAt,
+	// Add status-specific information
+	switch job.Status {
+	case models.JobStatusPending:
+		response["data"].(gin.H)["message"] = "Job is waiting to be processed"
+	case models.JobStatusProcessing:
+		response["data"].(gin.H)["message"] = "Job is being prepared for ML service"
+	case models.JobStatusSubmitted:
+		response["data"].(gin.H)["message"] = "Job has been submitted to ML service and is being processed"
+		response["data"].(gin.H)["note"] = "This may take a few minutes. ML service will respond when ready."
+	case models.JobStatusCompleted:
+		response["data"].(gin.H)["message"] = "Job completed successfully"
+		// Include result if available
+		if job.PredictionID != nil {
+			prediction, err := pc.repo.GetPredictionByID(*job.PredictionID)
+			if err == nil {
+				response["data"].(gin.H)["result"] = gin.H{
+					"prediction_id":   prediction.ID,
+					"risk_score":      prediction.RiskScore,
+					"risk_percentage": prediction.RiskScore * 100,
+					"created_at":      prediction.CreatedAt,
+				}
 			}
 		}
-	}
-
-	// If job failed, include error message
-	if job.Status == models.JobStatusFailed && job.ErrorMessage != nil {
-		response["data"].(gin.H)["error"] = *job.ErrorMessage
+	case models.JobStatusFailed:
+		response["data"].(gin.H)["message"] = "Job failed"
+		if job.ErrorMessage != nil {
+			response["data"].(gin.H)["error"] = *job.ErrorMessage
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -388,7 +397,7 @@ func (pc *PredictionController) GetJobStatus(c *gin.Context) {
 
 // GetJobResult godoc
 // @Summary Get prediction job result
-// @Description Get the detailed result of a completed prediction job
+// @Description Get the detailed result of a completed fire-and-forget prediction job
 // @Tags prediction
 // @Produce json
 // @Security ApiKeyAuth
@@ -440,8 +449,8 @@ func (pc *PredictionController) GetJobResult(c *gin.Context) {
 
 	// Check if job is completed
 	if job.Status != models.JobStatusCompleted {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "succcess",
 			"message": fmt.Sprintf("Job is not completed yet. Current status: %s", job.Status),
 			"current_status": gin.H{
 				"status":   job.Status,
@@ -644,6 +653,16 @@ func (pc *PredictionController) CancelJob(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status":  "error",
 			"message": "Job belongs to a different user",
+		})
+		return
+	}
+
+	// Check if job can be cancelled
+	if job.Status == models.JobStatusSubmitted {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Cannot cancel job that has been submitted to ML service",
+			"note":    "Job is already being processed by ML service",
 		})
 		return
 	}

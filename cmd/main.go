@@ -97,8 +97,7 @@ func main() {
 
 	log.Printf("Connecting to ML service via Hybrid Client (gRPC: %s, RabbitMQ: %s)...", mlServiceAddress, rabbitMQURL)
 
-	mlClient, err := ml.NewHybridMLClient(
-		mlServiceAddress,
+	mlClient, err := ml.NewAsyncMLClient(
 		rabbitMQURL,
 		"ml.prediction.hybrid_response",
 	)

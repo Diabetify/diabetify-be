@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/streadway/amqp"
@@ -16,21 +15,13 @@ import (
 type MLClient interface {
 	// Asynchronous operations (RabbitMQ)
 	PredictAsync(ctx context.Context, jobID string, features []float64) error
-	GetAsyncResult(ctx context.Context, correlationID string) (*models.PredictionResponse, error)
-
-	// Consumer registration (for job worker)
-	RegisterPendingCall(correlationID string, responseCh chan *models.PredictionResponse)
-	UnregisterPendingCall(correlationID string)
-
-	// Health check via RabbitMQ
 	HealthCheckAsync(ctx context.Context) error
-
 	// Common
 	Close() error
 }
 
-// asyncMLClient implements RabbitMQ-only communication
-type asyncMLClient struct {
+// fireAndForgetMLClient implements pure fire-and-forget communication
+type fireAndForgetMLClient struct {
 	// RabbitMQ components (publishing only)
 	rabbitConn    *amqp.Connection
 	rabbitChannel *amqp.Channel
@@ -38,12 +29,7 @@ type asyncMLClient struct {
 	responseQueue string
 	healthQueue   string
 
-	// Shared pending calls (used by job worker's consumer)
-	pendingCalls map[string]chan *models.PredictionResponse
-	pendingMutex sync.RWMutex
-
-	closed     bool
-	closeMutex sync.RWMutex
+	closed bool
 
 	// Configuration
 	rabbitURL string
@@ -53,18 +39,17 @@ type asyncMLClient struct {
 	messagesSent int64
 }
 
-// NewAsyncMLClient creates a client that supports RabbitMQ-only communication
+// NewFireAndForgetMLClient creates a client that supports fire-and-forget communication
 func NewAsyncMLClient(rabbitURL, responseQueue string) (MLClient, error) {
 	if responseQueue == "" {
 		responseQueue = "ml.prediction.hybrid_response"
 	}
 
-	client := &asyncMLClient{
+	client := &fireAndForgetMLClient{
 		rabbitURL:     rabbitURL,
 		requestQueue:  "ml.prediction.request",
 		responseQueue: responseQueue,
 		healthQueue:   "ml.health.request",
-		pendingCalls:  make(map[string]chan *models.PredictionResponse),
 		closed:        false,
 		debugEnabled:  true,
 		messagesSent:  0,
@@ -77,14 +62,7 @@ func NewAsyncMLClient(rabbitURL, responseQueue string) (MLClient, error) {
 	return client, nil
 }
 
-// NewHybridMLClient creates a backward-compatible async-only client
-// This maintains compatibility with existing code that uses the old constructor name
-func NewHybridMLClient(grpcAddress, rabbitURL, responseQueue string) (MLClient, error) {
-	return NewAsyncMLClient(rabbitURL, responseQueue)
-}
-
-// Initialize RabbitMQ connection (publishing only - no consumer)
-func (c *asyncMLClient) initRabbitMQ() error {
+func (c *fireAndForgetMLClient) initRabbitMQ() error {
 	if c.rabbitURL == "" {
 		c.rabbitURL = "amqp://admin:password123@localhost:5672/"
 	}
@@ -111,7 +89,7 @@ func (c *asyncMLClient) initRabbitMQ() error {
 	for _, queue := range queues {
 		_, err := ch.QueueDeclare(
 			queue,
-			true,  // durable = true (MUST match Python)
+			true,  // durable = true
 			false, // delete when unused = false
 			false, // exclusive = false
 			false, // no-wait = false
@@ -130,15 +108,13 @@ func (c *asyncMLClient) initRabbitMQ() error {
 	return nil
 }
 
-// ============ ASYNCHRONOUS OPERATIONS (RabbitMQ) ============
+// ============ FIRE-AND-FORGET OPERATIONS ============
 
-func (c *asyncMLClient) PredictAsync(ctx context.Context, jobID string, features []float64) error {
-	c.closeMutex.RLock()
+// SubmitPredictionFireAndForget sends a prediction request and immediately returns
+func (c *fireAndForgetMLClient) PredictAsync(ctx context.Context, jobID string, features []float64) error {
 	if c.closed || c.rabbitChannel == nil {
-		c.closeMutex.RUnlock()
 		return errors.New("RabbitMQ client not available")
 	}
-	c.closeMutex.RUnlock()
 
 	if err := c.validateFeatures(features); err != nil {
 		return err
@@ -157,6 +133,7 @@ func (c *asyncMLClient) PredictAsync(ctx context.Context, jobID string, features
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// Fire-and-forget: publish message and return immediately
 	err = c.rabbitChannel.Publish(
 		"",
 		c.requestQueue,
@@ -172,52 +149,18 @@ func (c *asyncMLClient) PredictAsync(ctx context.Context, jobID string, features
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to publish async request: %w", err)
+		return fmt.Errorf("failed to publish fire-and-forget request: %w", err)
 	}
 
 	c.messagesSent++
 	return nil
 }
 
-func (c *asyncMLClient) GetAsyncResult(ctx context.Context, correlationID string) (*models.PredictionResponse, error) {
-	c.closeMutex.RLock()
-	if c.closed {
-		c.closeMutex.RUnlock()
-		return nil, errors.New("client is closed")
-	}
-	c.closeMutex.RUnlock()
-
-	c.pendingMutex.RLock()
-	responseCh, exists := c.pendingCalls[correlationID]
-	c.pendingMutex.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("no pending call registered for correlation ID %s", correlationID)
-	}
-
-	timeout := 2 * time.Second
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("async result not ready yet for correlation ID %s", correlationID)
-	case response := <-responseCh:
-		if response == nil {
-			return nil, fmt.Errorf("received nil response for correlation ID %s", correlationID)
-		}
-		return response, nil
-	}
-}
-
-// HealthCheckAsync performs health check via RabbitMQ (async operation)
-func (c *asyncMLClient) HealthCheckAsync(ctx context.Context) error {
-	c.closeMutex.RLock()
+// HealthCheckFireAndForget sends a health check message and returns immediately
+func (c *fireAndForgetMLClient) HealthCheckAsync(ctx context.Context) error {
 	if c.closed || c.rabbitChannel == nil {
-		c.closeMutex.RUnlock()
 		return errors.New("RabbitMQ client not available")
 	}
-	c.closeMutex.RUnlock()
 
 	correlationID := fmt.Sprintf("health_%d", time.Now().UnixNano())
 	responseQueue := "ml.health.response"
@@ -232,6 +175,7 @@ func (c *asyncMLClient) HealthCheckAsync(ctx context.Context) error {
 		return fmt.Errorf("failed to marshal health check request: %w", err)
 	}
 
+	// Fire-and-forget: publish message and return immediately
 	err = c.rabbitChannel.Publish(
 		"",
 		c.healthQueue,
@@ -247,54 +191,17 @@ func (c *asyncMLClient) HealthCheckAsync(ctx context.Context) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to publish health check: %w", err)
+		return fmt.Errorf("failed to publish fire-and-forget health check: %w", err)
 	}
 
 	return nil
 }
 
-// ============ CONSUMER REGISTRATION (for job worker) ============
-
-func (c *asyncMLClient) RegisterPendingCall(correlationID string, responseCh chan *models.PredictionResponse) {
-	c.pendingMutex.Lock()
-	c.pendingCalls[correlationID] = responseCh
-	c.pendingMutex.Unlock()
-}
-
-func (c *asyncMLClient) UnregisterPendingCall(correlationID string) {
-	c.pendingMutex.Lock()
-	delete(c.pendingCalls, correlationID)
-	c.pendingMutex.Unlock()
-}
-
-// DeliverResponse delivers a response to a waiting goroutine (used by unified consumer)
-func (c *asyncMLClient) DeliverResponse(correlationID string, response *models.PredictionResponse) bool {
-	c.pendingMutex.RLock()
-	responseCh, exists := c.pendingCalls[correlationID]
-	c.pendingMutex.RUnlock()
-
-	if !exists {
-		return false
-	}
-
-	select {
-	case responseCh <- response:
-		return true
-	case <-time.After(2 * time.Second):
-		return false
-	}
-}
-
-// ============ CLEANUP ============
-
-func (c *asyncMLClient) Close() error {
-	c.closeMutex.Lock()
+func (c *fireAndForgetMLClient) Close() error {
 	if c.closed {
-		c.closeMutex.Unlock()
 		return nil
 	}
 	c.closed = true
-	c.closeMutex.Unlock()
 
 	var errs []error
 
@@ -310,23 +217,16 @@ func (c *asyncMLClient) Close() error {
 		}
 	}
 
-	c.pendingMutex.Lock()
-	for _, ch := range c.pendingCalls {
-		close(ch)
-	}
-	c.pendingCalls = make(map[string]chan *models.PredictionResponse)
-	c.pendingMutex.Unlock()
-
 	if len(errs) > 0 {
-		return fmt.Errorf("errors closing async client: %v", errs)
+		return fmt.Errorf("errors closing fire-and-forget client: %v", errs)
 	}
 
 	return nil
 }
 
-// ============ SHARED VALIDATION ============
+// ============ VALIDATION ============
 
-func (c *asyncMLClient) validateFeatures(features []float64) error {
+func (c *fireAndForgetMLClient) validateFeatures(features []float64) error {
 	if len(features) != 9 {
 		return errors.New("incorrect number of features: expected 9")
 	}
@@ -360,7 +260,7 @@ func (c *asyncMLClient) validateFeatures(features []float64) error {
 	return nil
 }
 
-func (c *asyncMLClient) isBinary(val float64) bool {
+func (c *fireAndForgetMLClient) isBinary(val float64) bool {
 	return val == 0 || val == 1
 }
 

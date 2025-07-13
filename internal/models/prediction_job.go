@@ -35,12 +35,9 @@ const (
 
 // Job processing steps
 const (
-	JobStepWaitingInQueue      = "waiting_in_queue"
-	JobStepValidatingProfile   = "validating_profile"
-	JobStepCalculatingFeatures = "calculating_features"
-	JobStepMLProcessing        = "ml_processing"
-	JobStepSavingResults       = "saving_results"
-	JobStepCompleted           = "completed"
+	JobStepValidatingProfile = "validating_profile"
+	JobStatusSubmitted       = "submitted"
+	JobStepCompleted         = "completed"
 )
 
 func (pj *PredictionJob) TableName() string {
