@@ -306,47 +306,29 @@ func (w *PredictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPredictionResponse) {
 	jobID := rabbitResponse.CorrelationID
 
-	fmt.Printf("=== PROCESSING ML RESPONSE ===\n")
-	fmt.Printf("Job ID: %s\n", jobID)
-
 	// Check if job exists and is in submitted state
 	job, err := w.jobRepo.GetJobByID(jobID)
 	if err != nil {
-		fmt.Printf("ERROR: Job not found: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Job Status: %s\n", job.Status)
-	fmt.Printf("Is What-If Job: %t\n", job.IsWhatIf)
-
 	if job.Status != "submitted" {
-		fmt.Printf("WARNING: Job status is not 'submitted', skipping\n")
 		return
 	}
 
 	// Handle error response
 	if rabbitResponse.Error != nil {
 		errMsg := *rabbitResponse.Error
-		fmt.Printf("ML Response has error: %s\n", errMsg)
 		_ = w.jobRepo.UpdateJobStatus(jobID, "failed", &errMsg)
 		return
 	}
 
 	// Convert response
 	modelResponse := convertToModelsResponse(rabbitResponse)
-	fmt.Printf("Converted Risk Score: %f\n", modelResponse.Prediction)
 
 	if w.isWhatIfJob(jobID) {
-		fmt.Printf("Processing as What-If job\n")
 		// ===== STORE WHAT-IF RESULT IN REDIS =====
 		featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse)
-
-		// LOG EXTRACTED FEATURE INFO
-		fmt.Printf("=== EXTRACTED FEATURE INFO ===\n")
-		for key, value := range featureInfo {
-			fmt.Printf("%s: %v (type: %T)\n", key, value, value)
-		}
-		fmt.Printf("========================\n")
 
 		whatIfResult := map[string]interface{}{
 			"job_id":               jobID,
@@ -366,7 +348,6 @@ func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 
 		// Complete job (no prediction ID)
 		_ = w.jobRepo.UpdateJobStatus(jobID, "completed", nil)
-		fmt.Printf("What-If job completed successfully\n")
 		return
 	}
 
@@ -376,10 +357,8 @@ func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 
 	// Create and save prediction (only regular predictions)
 	prediction := w.createPredictionRecord(job.UserID, modelResponse, featureInfo)
-	fmt.Printf("Created Prediction Record: %+v\n", prediction)
 	if err := w.predRepo.SavePrediction(prediction); err != nil {
 		errMsg := fmt.Sprintf("Failed to save prediction: %v", err)
-		fmt.Printf("ERROR: %s\n", errMsg)
 		_ = w.jobRepo.UpdateJobStatus(jobID, "failed", &errMsg)
 		return
 	}
