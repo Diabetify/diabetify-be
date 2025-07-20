@@ -255,19 +255,12 @@ Generate a personalized, easy-to-understand explanation for a user's diabetes ri
   - Negative values **decrease** risk.
 - **Contribution Percentage**: Represents the feature's **share of influence** relative to all other features. It is **NOT** the amount the risk increases by.
 
-### B. SHAP Impact Levels
-Use the **absolute SHAP value** to describe the strength of the impact:
-- **|SHAP| > 0.2**: Very Strong ("sangat kuat" or "sangat signifikan")
-- **|SHAP| 0.1 - 0.2**: Strong ("kuat" or "signifikan")
-- **|SHAP| 0.05 - 0.1**: Moderate ("cukup" or "moderat")
-- **|SHAP| < 0.05**: Slight ("sedikit" or "kecil")
-
-### C. Feature Definitions
+### B. Feature Definitions
 The following table defines the features used in the model. Use the "Feature Alias" in your explanations.
 
 %s
 
-### D. Global Feature Importance
+### C. Global Feature Importance
 The following list summarizes the global feature importance insights based on the entire dataset. Use these insights to explain how each feature typically influences diabetes risk.
 %s
 
@@ -290,35 +283,37 @@ The output MUST be a **valid JSON object** with the following structure:
 ## 5. CONTENT REQUIREMENTS
 
 ### 'summary'
-A 2-sentence summary
+A 2-sentence summary:
 1. State the overall diabetes risk percentage and its category (Low: <35%%, Moderate: 35-55%%, High: 55-70%%, Very High: >70%%).
 2. From only the factors that **increase risk (positive SHAP value)**, identify the top 1-3 with the highest contribution percentages.
 
 ### 'features'
-An array of explanations for each feature
+An array of explanations for each feature.
+
+#### Explanation Structure
 - **feature_name**: Use the original English feature name (e.g., "age", "bmi").  
 - **explanation**: A 2-sentence explanation:
-  - **Sentence 1**: State the user's value and its impact. **Crucially**, use the correct phrasing for contribution percentage. Mention the impact strength based on the SHAP value.
+  - **Sentence 1**: State the user's value and its impact. **Crucially**, use the correct phrasing for contribution percentage. Mention the contribution size (e.g., 'besar', 'cukup besar', 'sedang', 'kecil') based on its percentage.
     - For categorical values (0, 1, 2), use the human-readable label (e.g., "pernah merokok" instead of "1").
-    - **CORRECT PHRASING**: "...berkontribusi sebesar [Contribution %%] dari total pengaruh semua faktor."
+    - **CORRECT PHRASING**: "...berkontribusi sebesar [Contribution %%] dari total seluruh faktor."
     - **INCORRECT PHRASING**: "...menaikkan risiko Anda sebesar [Contribution %%]."
   - **Sentence 2**: Explain the general relationship between this feature and diabetes risk using the **Global Feature Importance** information.
-  	Start by describing how the user's value (e.g., low/high/certain category) typically affects the risk,  
-  	then contrast it with how the **opposite value or category** affects the risk.  
+    Start by describing how the user's value (e.g., low/high/certain category) typically affects the risk,  
+    then contrast it with how the **opposite value or category** affects the risk.  
 
 ---
 
 ## 6. FEW-SHOT EXAMPLES
 
-### Example 1: High BMI Impact (Strong Impact)
+### Example 1: High BMI Impact
 **Input Data**: BMI = 28.5, SHAP = +0.15, Contribution = 25.0%%
 **Expected Output**:
-"explanation": "Indeks massa tubuh Anda yang tergolong Obesitas I (28.5) memberikan pengaruh kuat yang menaikkan risiko Anda, berkontribusi sebesar 25.0%% dari total pengaruh semua faktor. Secara umum, indeks massa tubuh yang tinggi cenderung meningkatkan risiko diabetes, sedangkan indeks massa tubuh yang normal akan menurunkannya."
+"explanation": "Indeks massa tubuh Anda yang tergolong Obesitas I (28.5) memberikan kontribusi yang besar untuk menaikkan risiko Anda, berkontribusi sebesar 25.0%% dari total seluruh faktor. Secara umum, indeks massa tubuh yang tinggi cenderung meningkatkan risiko diabetes, sedangkan indeks massa tubuh yang normal akan menurunkannya."
 
-### Example 2: Young Age Factor (Moderate Impact)
+### Example 2: Young Age Factor
 **Input Data**: Age = 25, SHAP = -0.08, Contribution = 12.0%%
 **Expected Output**:
-"explanation": "Usia Anda yang tergolong muda (25 tahun) memberikan pengaruh moderat yang menurunkan risiko, berkontribusi sebesar 12.0%% dari total pengaruh semua faktor. Usia muda cenderung menurunkan risiko diabetes, sementara usia yang lebih tua cenderung meningkatkannya."
+"explanation": "Usia Anda yang tergolong muda (25 tahun) memberikan kontribusi yang sedang untuk menurunkan risiko, berkontribusi sebesar 12.0%% dari total seluruh faktor. Usia muda cenderung menurunkan risiko diabetes, sementara usia yang lebih tua cenderung meningkatkannya."
 
 ### Example 3: Summary
 **Input Data**: Overall Risk = 65%%, Top factors: BMI (25.0%%), is_bloodline (18.0%%)
