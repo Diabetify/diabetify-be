@@ -19,18 +19,19 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// Test helper functions
 func setupPredictionTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	return router
 }
 
-func setupPredictionControllerWithMocks() (*controllers.PredictionController, *mocks.MockPredictionRepository, *mocks.MockUserRepository, *mocks.MockUserProfileRepository, *mocks.MockActivityRepository, *mocks.MockMLClient) {
+func setupPredictionControllerWithMocks() (*controllers.PredictionController, *mocks.MockPredictionRepository, *mocks.MockUserRepository, *mocks.MockUserProfileRepository, *mocks.MockActivityRepository, *mocks.MockPredictionJobRepository, *mocks.MockPredictionJobWorker, *mocks.MockMLClient) {
 	mockPredRepo := new(mocks.MockPredictionRepository)
 	mockUserRepo := new(mocks.MockUserRepository)
 	mockProfileRepo := new(mocks.MockUserProfileRepository)
 	mockActivityRepo := new(mocks.MockActivityRepository)
+	mockJobRepo := new(mocks.MockPredictionJobRepository)
+	mockJobWorker := new(mocks.MockPredictionJobWorker)
 	mockMLClient := new(mocks.MockMLClient)
 
 	controller := controllers.NewPredictionController(
@@ -38,10 +39,12 @@ func setupPredictionControllerWithMocks() (*controllers.PredictionController, *m
 		mockUserRepo,
 		mockProfileRepo,
 		mockActivityRepo,
+		mockJobRepo,
+		mockJobWorker,
 		mockMLClient,
 	)
 
-	return controller, mockPredRepo, mockUserRepo, mockProfileRepo, mockActivityRepo, mockMLClient
+	return controller, mockPredRepo, mockUserRepo, mockProfileRepo, mockActivityRepo, mockJobRepo, mockJobWorker, mockMLClient
 }
 
 func addPredictionAuthMiddleware(userID uint) gin.HandlerFunc {
@@ -52,7 +55,7 @@ func addPredictionAuthMiddleware(userID uint) gin.HandlerFunc {
 }
 
 func TestNewPredictionController(t *testing.T) {
-	controller, _, _, _, _, _ := setupPredictionControllerWithMocks()
+	controller, _, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 	assert.NotNil(t, controller)
 }
 
@@ -60,76 +63,60 @@ func TestMakePrediction(t *testing.T) {
 	tests := []struct {
 		name           string
 		userID         uint
-		setupMocks     func(*mocks.MockPredictionRepository, *mocks.MockUserRepository, *mocks.MockUserProfileRepository, *mocks.MockActivityRepository, *mocks.MockMLClient)
+		setupMocks     func(*mocks.MockPredictionRepository, *mocks.MockUserRepository, *mocks.MockUserProfileRepository, *mocks.MockActivityRepository, *mocks.MockPredictionJobRepository, *mocks.MockPredictionJobWorker, *mocks.MockMLClient)
 		expectedStatus int
 		expectedMsg    string
 	}{
 		{
-			name:   "successful prediction",
+			name:   "successful async prediction submission",
 			userID: 1,
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
 				// Mock user data
-				dob := "1990-01-01"
+				dob := "2000-01-01"
 				user := &models.User{
 					ID:  1,
 					DOB: &dob,
 				}
 				userRepo.On("GetUserByID", uint(1)).Return(user, nil)
 
-				// Mock profile data
+				// Mock profile data with all required fields
 				bmi := 25.0
 				hypertension := false
 				cholesterol := false
 				macrosomicBaby := 0
 				bloodline := false
-				height := 170
 				profile := &models.UserProfile{
 					BMI:            &bmi,
 					Hypertension:   &hypertension,
 					Cholesterol:    &cholesterol,
 					MacrosomicBaby: &macrosomicBaby,
 					Bloodline:      &bloodline,
-					Height:         &height,
-					CreatedAt:      time.Now().AddDate(0, 0, -30),
 				}
 				profileRepo.On("FindByUserID", uint(1)).Return(profile, nil)
 
-				// Mock activity data
-				activityRepo.On("GetActivitiesByUserIDAndTypeAndDateRange", uint(1), "smoke", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return([]models.Activity{}, nil)
-				activityRepo.On("GetActivitiesByUserIDAndTypeAndDateRange", uint(1), "workout", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return([]models.Activity{}, nil)
+				// Mock job creation - SUCCESS
+				jobRepo.On("SaveJob", mock.AnythingOfType("*models.PredictionJob")).Return(nil)
 
-				// Mock ML response
-				mlResponse := &models.PredictionResponse{
-					Prediction:  0.15,
-					Explanation: map[string]models.ExplanationItem{},
-					ElapsedTime: 50,
-					Timestamp:   time.Now(),
-				}
-				mlClient.On("Predict", mock.AnythingOfType("*context.timerCtx"), mock.AnythingOfType("[]float64")).Return(mlResponse, nil)
-
-				// Mock save prediction
-				predRepo.On("SavePrediction", mock.AnythingOfType("*models.Prediction")).Return(nil)
-
-				// Mock update last prediction time
-				userRepo.On("UpdateLastPredictionTime", uint(1), mock.AnythingOfType("*time.Time")).Return(nil)
+				// Mock job worker - SUCCESS (this is key)
+				jobWorker.On("SubmitJob", mock.AnythingOfType("models.PredictionJobRequest")).Return(nil)
 			},
-			expectedStatus: http.StatusOK,
-			expectedMsg:    "Prediction successful via gRPC using your profile data",
+			expectedStatus: http.StatusAccepted,
+			expectedMsg:    "Prediction job submitted successfully",
 		},
 		{
 			name:   "user not found",
 			userID: 999,
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
 				userRepo.On("GetUserByID", uint(999)).Return(nil, errors.New("user not found"))
 			},
-			expectedStatus: http.StatusNotFound,
-			expectedMsg:    "User not found",
+			expectedStatus: http.StatusBadRequest,
+			expectedMsg:    "Incomplete user profile",
 		},
 		{
 			name:   "user profile not found",
 			userID: 1,
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
-				dob := "1990-01-01"
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				dob := "2000-01-01"
 				user := &models.User{
 					ID:  1,
 					DOB: &dob,
@@ -137,14 +124,14 @@ func TestMakePrediction(t *testing.T) {
 				userRepo.On("GetUserByID", uint(1)).Return(user, nil)
 				profileRepo.On("FindByUserID", uint(1)).Return(nil, errors.New("profile not found"))
 			},
-			expectedStatus: http.StatusNotFound,
-			expectedMsg:    "User profile not found. Please complete your profile first.",
+			expectedStatus: http.StatusBadRequest,
+			expectedMsg:    "Incomplete user profile",
 		},
 		{
-			name:   "incomplete profile data",
+			name:   "incomplete profile data - missing BMI",
 			userID: 1,
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
-				dob := "1990-01-01"
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				dob := "2000-01-01"
 				user := &models.User{
 					ID:  1,
 					DOB: &dob,
@@ -153,18 +140,18 @@ func TestMakePrediction(t *testing.T) {
 
 				// Profile with missing BMI
 				profile := &models.UserProfile{
-					BMI: nil, // Missing BMI
+					BMI: nil,
 				}
 				profileRepo.On("FindByUserID", uint(1)).Return(profile, nil)
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectedMsg:    "Incomplete profile data for prediction",
+			expectedMsg:    "Incomplete user profile",
 		},
 		{
-			name:   "ML service error",
+			name:   "job submission failed",
 			userID: 1,
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
-				dob := "1990-01-01"
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				dob := "2000-01-01"
 				user := &models.User{
 					ID:  1,
 					DOB: &dob,
@@ -176,32 +163,29 @@ func TestMakePrediction(t *testing.T) {
 				cholesterol := false
 				macrosomicBaby := 0
 				bloodline := false
-				height := 170
 				profile := &models.UserProfile{
 					BMI:            &bmi,
 					Hypertension:   &hypertension,
 					Cholesterol:    &cholesterol,
 					MacrosomicBaby: &macrosomicBaby,
 					Bloodline:      &bloodline,
-					Height:         &height,
-					CreatedAt:      time.Now().AddDate(0, 0, -30),
 				}
 				profileRepo.On("FindByUserID", uint(1)).Return(profile, nil)
 
-				activityRepo.On("GetActivitiesByUserIDAndTypeAndDateRange", uint(1), "smoke", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return([]models.Activity{}, nil)
-				activityRepo.On("GetActivitiesByUserIDAndTypeAndDateRange", uint(1), "workout", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return([]models.Activity{}, nil)
-
-				mlClient.On("Predict", mock.AnythingOfType("*context.timerCtx"), mock.AnythingOfType("[]float64")).Return(nil, errors.New("ML service unavailable"))
+				// Mock job save success but worker submission failure
+				jobRepo.On("SaveJob", mock.AnythingOfType("*models.PredictionJob")).Return(nil)
+				jobWorker.On("SubmitJob", mock.AnythingOfType("models.PredictionJobRequest")).Return(errors.New("job queue unavailable"))
+				jobRepo.On("UpdateJobStatus", mock.AnythingOfType("string"), models.JobStatusFailed, mock.AnythingOfType("*string")).Return(nil)
 			},
 			expectedStatus: http.StatusInternalServerError,
-			expectedMsg:    "Prediction failed",
+			expectedMsg:    "Failed to submit prediction job",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, userRepo, profileRepo, activityRepo, mlClient := setupPredictionControllerWithMocks()
-			tt.setupMocks(predRepo, userRepo, profileRepo, activityRepo, mlClient)
+			controller, predRepo, userRepo, profileRepo, activityRepo, jobRepo, jobWorker, mlClient := setupPredictionControllerWithMocks()
+			tt.setupMocks(predRepo, userRepo, profileRepo, activityRepo, jobRepo, jobWorker, mlClient)
 
 			router := setupPredictionTestRouter()
 			router.Use(addPredictionAuthMiddleware(tt.userID))
@@ -224,13 +208,15 @@ func TestMakePrediction(t *testing.T) {
 			userRepo.AssertExpectations(t)
 			profileRepo.AssertExpectations(t)
 			activityRepo.AssertExpectations(t)
+			jobRepo.AssertExpectations(t)
+			jobWorker.AssertExpectations(t)
 			mlClient.AssertExpectations(t)
 		})
 	}
 }
 
 func TestMakePredictionUnauthorized(t *testing.T) {
-	controller, _, _, _, _, _ := setupPredictionControllerWithMocks()
+	controller, _, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 	router := setupPredictionTestRouter()
 	router.POST("/prediction", controller.MakePrediction)
 
@@ -253,7 +239,7 @@ func TestWhatIfPrediction(t *testing.T) {
 		name           string
 		userID         uint
 		requestBody    map[string]interface{}
-		setupMocks     func(*mocks.MockPredictionRepository, *mocks.MockUserRepository, *mocks.MockUserProfileRepository, *mocks.MockActivityRepository, *mocks.MockMLClient)
+		setupMocks     func(*mocks.MockPredictionRepository, *mocks.MockUserRepository, *mocks.MockUserProfileRepository, *mocks.MockActivityRepository, *mocks.MockPredictionJobRepository, *mocks.MockPredictionJobWorker, *mocks.MockMLClient)
 		expectedStatus int
 		expectedMsg    string
 	}{
@@ -268,54 +254,90 @@ func TestWhatIfPrediction(t *testing.T) {
 				"physical_activity_frequency": 3,
 				"is_cholesterol":              false,
 			},
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
-				dob := "1990-01-01"
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				// Mock user data with DOB
+				dob := "2000-01-01"
 				user := &models.User{
 					ID:  1,
 					DOB: &dob,
 				}
 				userRepo.On("GetUserByID", uint(1)).Return(user, nil)
 
+				// Mock profile data with ALL required fields for validation
+				bmi := 25.0
+				hypertension := false
+				cholesterol := false
 				macrosomicBaby := 0
 				bloodline := false
-				height := 170
-				yearOfSmoking := 5
+				height := 175
 				profile := &models.UserProfile{
-					MacrosomicBaby: &macrosomicBaby,
-					Bloodline:      &bloodline,
-					Height:         &height,
-					YearOfSmoking:  &yearOfSmoking,
+					BMI:            &bmi,            // Required
+					Hypertension:   &hypertension,   // Required
+					Cholesterol:    &cholesterol,    // Required
+					MacrosomicBaby: &macrosomicBaby, // Required
+					Bloodline:      &bloodline,      // Required
+					Height:         &height,         // Additional field
 				}
 				profileRepo.On("FindByUserID", uint(1)).Return(profile, nil)
 
-				mlResponse := &models.PredictionResponse{
-					Prediction:  0.25,
-					Explanation: map[string]models.ExplanationItem{},
-					ElapsedTime: 45,
-					Timestamp:   time.Now(),
-				}
-				mlClient.On("Predict", mock.AnythingOfType("*context.timerCtx"), mock.AnythingOfType("[]float64")).Return(mlResponse, nil)
+				// Mock job creation and submission - SUCCESS
+				jobRepo.On("SaveJob", mock.AnythingOfType("*models.PredictionJob")).Return(nil)
+				jobWorker.On("SubmitJob", mock.AnythingOfType("models.PredictionJobRequest")).Return(nil)
 			},
-			expectedStatus: http.StatusOK,
-			expectedMsg:    "Prediction successful via gRPC using your profile data",
+			expectedStatus: http.StatusAccepted,
+			expectedMsg:    "What-if prediction job submitted successfully",
 		},
 		{
 			name:   "invalid input format",
 			userID: 1,
 			requestBody: map[string]interface{}{
-				"smoking_status": "invalid", // Should be int
+				"smoking_status": "invalid",
 			},
-			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, mlClient *mocks.MockMLClient) {
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedMsg:    "Invalid input format",
+		},
+		{
+			name:   "incomplete profile - missing required fields",
+			userID: 1,
+			requestBody: map[string]interface{}{
+				"smoking_status":              1,
+				"avg_smoke_count":             5,
+				"weight":                      70.0,
+				"is_hypertension":             false,
+				"physical_activity_frequency": 3,
+				"is_cholesterol":              false,
+			},
+			setupMocks: func(predRepo *mocks.MockPredictionRepository, userRepo *mocks.MockUserRepository, profileRepo *mocks.MockUserProfileRepository, activityRepo *mocks.MockActivityRepository, jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				dob := "2000-01-01"
+				user := &models.User{
+					ID:  1,
+					DOB: &dob,
+				}
+				userRepo.On("GetUserByID", uint(1)).Return(user, nil)
+
+				// Profile missing required BMI field
+				macrosomicBaby := 0
+				bloodline := false
+				height := 175
+				profile := &models.UserProfile{
+					BMI:            nil, // Missing required field
+					MacrosomicBaby: &macrosomicBaby,
+					Bloodline:      &bloodline,
+					Height:         &height,
+				}
+				profileRepo.On("FindByUserID", uint(1)).Return(profile, nil)
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedMsg:    "Incomplete user profile",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, userRepo, profileRepo, activityRepo, mlClient := setupPredictionControllerWithMocks()
-			tt.setupMocks(predRepo, userRepo, profileRepo, activityRepo, mlClient)
+			controller, predRepo, userRepo, profileRepo, activityRepo, jobRepo, jobWorker, mlClient := setupPredictionControllerWithMocks()
+			tt.setupMocks(predRepo, userRepo, profileRepo, activityRepo, jobRepo, jobWorker, mlClient)
 
 			router := setupPredictionTestRouter()
 			router.Use(addPredictionAuthMiddleware(tt.userID))
@@ -339,6 +361,8 @@ func TestWhatIfPrediction(t *testing.T) {
 			userRepo.AssertExpectations(t)
 			profileRepo.AssertExpectations(t)
 			activityRepo.AssertExpectations(t)
+			jobRepo.AssertExpectations(t)
+			jobWorker.AssertExpectations(t)
 			mlClient.AssertExpectations(t)
 		})
 	}
@@ -347,37 +371,46 @@ func TestWhatIfPrediction(t *testing.T) {
 func TestTestMLConnection(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMock      func(*mocks.MockMLClient)
+		setupMock      func(*mocks.MockPredictionJobWorker, *mocks.MockMLClient)
 		expectedStatus int
 		expectedMsg    string
 	}{
 		{
 			name: "ML service healthy",
-			setupMock: func(mlClient *mocks.MockMLClient) {
-				mlClient.On("HealthCheck", mock.AnythingOfType("*context.timerCtx")).Return(nil)
+			setupMock: func(jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				status := map[string]interface{}{
+					"running":            true,
+					"rabbitmq_connected": true,
+				}
+				jobWorker.On("GetStatus").Return(status)
+				mlClient.On("HealthCheckAsync", mock.Anything).Return(nil)
 			},
 			expectedStatus: http.StatusOK,
-			expectedMsg:    "ML service is healthy via gRPC",
+			expectedMsg:    "Async ML service is healthy via RabbitMQ",
 		},
 		{
-			name: "ML service unhealthy",
-			setupMock: func(mlClient *mocks.MockMLClient) {
-				mlClient.On("HealthCheck", mock.AnythingOfType("*context.timerCtx")).Return(errors.New("connection failed"))
+			name: "ML service unhealthy - worker not running",
+			setupMock: func(jobWorker *mocks.MockPredictionJobWorker, mlClient *mocks.MockMLClient) {
+				status := map[string]interface{}{
+					"running":            false,
+					"rabbitmq_connected": false,
+				}
+				jobWorker.On("GetStatus").Return(status)
 			},
 			expectedStatus: http.StatusInternalServerError,
-			expectedMsg:    "ML service is not reachable via gRPC",
+			expectedMsg:    "Async ML service is not reachable via RabbitMQ",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, _, _, _, _, mlClient := setupPredictionControllerWithMocks()
-			tt.setupMock(mlClient)
+			controller, _, _, _, _, _, jobWorker, mlClient := setupPredictionControllerWithMocks()
+			tt.setupMock(jobWorker, mlClient)
 
 			router := setupPredictionTestRouter()
-			router.GET("/prediction/predict/health", controller.TestMLConnection)
+			router.GET("/prediction/health", controller.TestMLConnection)
 
-			req := httptest.NewRequest("GET", "/prediction/predict/health", nil)
+			req := httptest.NewRequest("GET", "/prediction/health", nil)
 			w := httptest.NewRecorder()
 
 			router.ServeHTTP(w, req)
@@ -389,7 +422,86 @@ func TestTestMLConnection(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Contains(t, response["message"], tt.expectedMsg)
 
+			jobWorker.AssertExpectations(t)
 			mlClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetJobStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		jobID          string
+		userID         uint
+		setupMock      func(*mocks.MockPredictionJobRepository, *mocks.MockPredictionRepository)
+		expectedStatus int
+		expectedMsg    string
+	}{
+		{
+			name:   "successful status retrieval",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, predRepo *mocks.MockPredictionRepository) {
+				job := &models.PredictionJob{
+					ID:     "test-job-id",
+					UserID: 1,
+					Status: models.JobStatusCompleted,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "Job status retrieved successfully",
+		},
+		{
+			name:   "job not found",
+			jobID:  "nonexistent-job",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, predRepo *mocks.MockPredictionRepository) {
+				jobRepo.On("GetJobByID", "nonexistent-job").Return(nil, errors.New("job not found"))
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedMsg:    "Job not found",
+		},
+		{
+			name:   "job belongs to different user",
+			jobID:  "test-job-id",
+			userID: 2,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, predRepo *mocks.MockPredictionRepository) {
+				job := &models.PredictionJob{
+					ID:     "test-job-id",
+					UserID: 1,
+					Status: models.JobStatusPending,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+			},
+			expectedStatus: http.StatusForbidden,
+			expectedMsg:    "Job belongs to a different user",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller, predRepo, _, _, _, jobRepo, _, _ := setupPredictionControllerWithMocks()
+			tt.setupMock(jobRepo, predRepo)
+
+			router := setupPredictionTestRouter()
+			router.Use(addPredictionAuthMiddleware(tt.userID))
+			router.GET("/prediction/job/:job_id/status", controller.GetJobStatus)
+
+			req := httptest.NewRequest("GET", "/prediction/job/"+tt.jobID+"/status", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			var response map[string]interface{}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+			assert.Contains(t, response["message"], tt.expectedMsg)
+
+			jobRepo.AssertExpectations(t)
+			predRepo.AssertExpectations(t)
 		})
 	}
 }
@@ -436,21 +548,11 @@ func TestGetUserPredictions(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedMsg:    "Invalid limit parameter",
 		},
-		{
-			name:   "repository error",
-			userID: 1,
-			limit:  "5",
-			setupMock: func(predRepo *mocks.MockPredictionRepository) {
-				predRepo.On("GetPredictionsByUserID", uint(1), 5).Return([]models.Prediction{}, errors.New("database error"))
-			},
-			expectedStatus: http.StatusInternalServerError,
-			expectedMsg:    "Failed to retrieve prediction history",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, _, _, _, _ := setupPredictionControllerWithMocks()
+			controller, predRepo, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 			tt.setupMock(predRepo)
 
 			router := setupPredictionTestRouter()
@@ -532,7 +634,7 @@ func TestGetPredictionByID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, _, _, _, _ := setupPredictionControllerWithMocks()
+			controller, predRepo, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 			tt.setupMock(predRepo)
 
 			router := setupPredictionTestRouter()
@@ -610,7 +712,7 @@ func TestDeletePrediction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, _, _, _, _ := setupPredictionControllerWithMocks()
+			controller, predRepo, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 			tt.setupMock(predRepo)
 
 			router := setupPredictionTestRouter()
@@ -684,7 +786,7 @@ func TestGetPredictionsByDateRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, _, _, _, _ := setupPredictionControllerWithMocks()
+			controller, predRepo, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 			tt.setupMock(predRepo)
 
 			router := setupPredictionTestRouter()
@@ -750,7 +852,7 @@ func TestGetPredictionScoreByDate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, _, _, _, _ := setupPredictionControllerWithMocks()
+			controller, predRepo, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 			tt.setupMock(predRepo)
 
 			router := setupPredictionTestRouter()
@@ -819,7 +921,7 @@ func TestGetLatestPredictionExplanation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller, predRepo, _, _, _, _ := setupPredictionControllerWithMocks()
+			controller, predRepo, _, _, _, _, _, _ := setupPredictionControllerWithMocks()
 			tt.setupMock(predRepo)
 
 			router := setupPredictionTestRouter()
@@ -843,58 +945,285 @@ func TestGetLatestPredictionExplanation(t *testing.T) {
 	}
 }
 
-// Benchmark tests
-func BenchmarkMakePrediction(b *testing.B) {
-	controller, predRepo, userRepo, profileRepo, activityRepo, mlClient := setupPredictionControllerWithMocks()
-
-	// Setup mocks for benchmark
-	dob := "1990-01-01"
-	user := &models.User{
-		ID:  1,
-		DOB: &dob,
+func TestGetUserJobs(t *testing.T) {
+	tests := []struct {
+		name           string
+		userID         uint
+		status         string
+		limit          string
+		setupMock      func(*mocks.MockPredictionJobRepository)
+		expectedStatus int
+		expectedMsg    string
+	}{
+		{
+			name:   "successful retrieval with status filter",
+			userID: 1,
+			status: "completed",
+			limit:  "5",
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository) {
+				jobs := []*models.PredictionJob{
+					{ID: "job1", UserID: 1, Status: "completed"},
+					{ID: "job2", UserID: 1, Status: "completed"},
+				}
+				jobRepo.On("GetJobsByUserIDAndStatus", uint(1), "completed", 5).Return(jobs, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "Jobs retrieved successfully",
+		},
+		{
+			name:   "successful retrieval without status filter",
+			userID: 1,
+			status: "",
+			limit:  "10",
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository) {
+				jobs := []*models.PredictionJob{
+					{ID: "job1", UserID: 1, Status: "completed"},
+					{ID: "job2", UserID: 1, Status: "pending"},
+				}
+				jobRepo.On("GetJobsByUserID", uint(1), 10).Return(jobs, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "Jobs retrieved successfully",
+		},
 	}
-	userRepo.On("GetUserByID", uint(1)).Return(user, nil)
 
-	bmi := 25.0
-	hypertension := false
-	cholesterol := false
-	macrosomicBaby := 0
-	bloodline := false
-	height := 170
-	profile := &models.UserProfile{
-		BMI:            &bmi,
-		Hypertension:   &hypertension,
-		Cholesterol:    &cholesterol,
-		MacrosomicBaby: &macrosomicBaby,
-		Bloodline:      &bloodline,
-		Height:         &height,
-		CreatedAt:      time.Now().AddDate(0, 0, -30),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller, _, _, _, _, jobRepo, _, _ := setupPredictionControllerWithMocks()
+			tt.setupMock(jobRepo)
+
+			router := setupPredictionTestRouter()
+			router.Use(addPredictionAuthMiddleware(tt.userID))
+			router.GET("/prediction/jobs", controller.GetUserJobs)
+
+			url := "/prediction/jobs?"
+			if tt.status != "" {
+				url += "status=" + tt.status + "&"
+			}
+			if tt.limit != "" {
+				url += "limit=" + tt.limit
+			}
+
+			req := httptest.NewRequest("GET", url, nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			var response map[string]interface{}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+			assert.Contains(t, response["message"], tt.expectedMsg)
+
+			jobRepo.AssertExpectations(t)
+		})
 	}
-	profileRepo.On("FindByUserID", uint(1)).Return(profile, nil)
+}
 
-	activityRepo.On("GetActivitiesByUserIDAndTypeAndDateRange", uint(1), "smoke", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return([]models.Activity{}, nil)
-	activityRepo.On("GetActivitiesByUserIDAndTypeAndDateRange", uint(1), "workout", mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time")).Return([]models.Activity{}, nil)
-
-	mlResponse := &models.PredictionResponse{
-		Prediction:  0.15,
-		Explanation: map[string]models.ExplanationItem{},
-		ElapsedTime: 50,
-		Timestamp:   time.Now(),
+func TestCancelJob(t *testing.T) {
+	tests := []struct {
+		name           string
+		jobID          string
+		userID         uint
+		setupMock      func(*mocks.MockPredictionJobRepository)
+		expectedStatus int
+		expectedMsg    string
+	}{
+		{
+			name:   "successful job cancellation",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository) {
+				job := &models.PredictionJob{
+					ID:     "test-job-id",
+					UserID: 1,
+					Status: models.JobStatusPending,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+				jobRepo.On("CancelJob", "test-job-id").Return(nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "Job cancelled successfully",
+		},
+		{
+			name:   "job not found",
+			jobID:  "nonexistent-job",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository) {
+				jobRepo.On("GetJobByID", "nonexistent-job").Return(nil, errors.New("job not found"))
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedMsg:    "Job not found",
+		},
+		{
+			name:   "cannot cancel submitted job",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository) {
+				job := &models.PredictionJob{
+					ID:     "test-job-id",
+					UserID: 1,
+					Status: models.JobStatusSubmitted,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedMsg:    "Cannot cancel job that has been submitted to ML service",
+		},
 	}
-	mlClient.On("Predict", mock.AnythingOfType("*context.timerCtx"), mock.AnythingOfType("[]float64")).Return(mlResponse, nil)
 
-	predRepo.On("SavePrediction", mock.AnythingOfType("*models.Prediction")).Return(nil)
-	userRepo.On("UpdateLastPredictionTime", uint(1), mock.AnythingOfType("*time.Time")).Return(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller, _, _, _, _, jobRepo, _, _ := setupPredictionControllerWithMocks()
+			tt.setupMock(jobRepo)
 
-	router := setupPredictionTestRouter()
-	router.Use(addPredictionAuthMiddleware(1))
-	router.POST("/prediction", controller.MakePrediction)
+			router := setupPredictionTestRouter()
+			router.Use(addPredictionAuthMiddleware(tt.userID))
+			router.POST("/prediction/job/:job_id/cancel", controller.CancelJob)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		req := httptest.NewRequest("POST", "/prediction", nil)
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+			req := httptest.NewRequest("POST", "/prediction/job/"+tt.jobID+"/cancel", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			var response map[string]interface{}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+			assert.Contains(t, response["message"], tt.expectedMsg)
+
+			jobRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetJobResult(t *testing.T) {
+	tests := []struct {
+		name           string
+		jobID          string
+		userID         uint
+		setupMock      func(*mocks.MockPredictionJobRepository, *mocks.MockPredictionJobWorker, *mocks.MockPredictionRepository)
+		expectedStatus int
+		expectedMsg    string
+	}{
+		{
+			name:   "successful what-if result retrieval",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, predRepo *mocks.MockPredictionRepository) {
+				job := &models.PredictionJob{
+					ID:       "test-job-id",
+					UserID:   1,
+					Status:   models.JobStatusCompleted,
+					IsWhatIf: true,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+
+				result := map[string]interface{}{
+					"risk_score":      0.15,
+					"risk_percentage": 15.0,
+					"timestamp":       time.Now(),
+				}
+				jobWorker.On("GetWhatIfResult", "test-job-id").Return(result, true, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "What-if prediction result retrieved successfully",
+		},
+		{
+			name:   "successful regular prediction result retrieval",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, predRepo *mocks.MockPredictionRepository) {
+				predictionID := uint(1)
+				job := &models.PredictionJob{
+					ID:           "test-job-id",
+					UserID:       1,
+					Status:       models.JobStatusCompleted,
+					IsWhatIf:     false,
+					PredictionID: &predictionID,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+
+				prediction := &models.Prediction{
+					ID:        1,
+					UserID:    1,
+					RiskScore: 0.15,
+				}
+				predRepo.On("GetPredictionByID", uint(1)).Return(prediction, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "Job result retrieved successfully",
+		},
+		{
+			name:   "job not found",
+			jobID:  "nonexistent-job",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, predRepo *mocks.MockPredictionRepository) {
+				jobRepo.On("GetJobByID", "nonexistent-job").Return(nil, errors.New("job not found"))
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedMsg:    "Job not found",
+		},
+		{
+			name:   "what-if result not found in cache",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, predRepo *mocks.MockPredictionRepository) {
+				job := &models.PredictionJob{
+					ID:       "test-job-id",
+					UserID:   1,
+					Status:   models.JobStatusCompleted,
+					IsWhatIf: true,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+				jobWorker.On("GetWhatIfResult", "test-job-id").Return(map[string]interface{}{}, false, nil)
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedMsg:    "What-if result has expired or not found",
+		},
+		{
+			name:   "job not completed yet",
+			jobID:  "test-job-id",
+			userID: 1,
+			setupMock: func(jobRepo *mocks.MockPredictionJobRepository, jobWorker *mocks.MockPredictionJobWorker, predRepo *mocks.MockPredictionRepository) {
+				job := &models.PredictionJob{
+					ID:     "test-job-id",
+					UserID: 1,
+					Status: models.JobStatusPending,
+				}
+				jobRepo.On("GetJobByID", "test-job-id").Return(job, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedMsg:    "Job is not completed yet",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller, predRepo, _, _, _, jobRepo, jobWorker, _ := setupPredictionControllerWithMocks()
+			tt.setupMock(jobRepo, jobWorker, predRepo)
+
+			router := setupPredictionTestRouter()
+			router.Use(addPredictionAuthMiddleware(tt.userID))
+			router.GET("/prediction/job/:job_id/result", controller.GetJobResult)
+
+			req := httptest.NewRequest("GET", "/prediction/job/"+tt.jobID+"/result", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			var response map[string]interface{}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+			assert.Contains(t, response["message"], tt.expectedMsg)
+
+			jobRepo.AssertExpectations(t)
+			jobWorker.AssertExpectations(t)
+			predRepo.AssertExpectations(t)
+		})
 	}
 }
