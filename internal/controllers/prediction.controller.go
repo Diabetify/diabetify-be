@@ -23,7 +23,7 @@ type PredictionController struct {
 	profileRepo  repository.UserProfileRepository
 	activityRepo repository.ActivityRepository
 	jobRepo      repository.PredictionJobRepository
-	jobWorker    *services.PredictionJobWorker
+	jobWorker    services.PredictionJobWorker
 	mlClient     ml.MLClient
 }
 
@@ -33,7 +33,7 @@ func NewPredictionController(
 	profileRepo repository.UserProfileRepository,
 	activityRepo repository.ActivityRepository,
 	jobRepo repository.PredictionJobRepository,
-	jobWorker *services.PredictionJobWorker,
+	jobWorker services.PredictionJobWorker,
 	mlClient ml.MLClient,
 ) *PredictionController {
 	return &PredictionController{

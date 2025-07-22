@@ -15,7 +15,24 @@ import (
 	"github.com/streadway/amqp"
 )
 
-type PredictionJobWorker struct {
+// PredictionJobWorker defines the interface for prediction job processing
+type PredictionJobWorker interface {
+	// Lifecycle management
+	Start()
+	Stop()
+
+	// Job submission
+	SubmitJob(jobRequest models.PredictionJobRequest) error
+
+	// Status and monitoring
+	GetStatus() map[string]interface{}
+
+	// What-if result handling
+	GetWhatIfResult(jobID string) (map[string]interface{}, bool, error)
+}
+
+// predictionJobWorker is the concrete implementation
+type predictionJobWorker struct {
 	// Repositories
 	jobRepo      repository.PredictionJobRepository
 	predRepo     repository.PredictionRepository
@@ -44,6 +61,7 @@ type PredictionJobWorker struct {
 	redisClient     *cache.RedisClient
 }
 
+// NewPredictionJobWorker creates a new prediction job worker
 func NewPredictionJobWorker(
 	jobRepo repository.PredictionJobRepository,
 	predRepo repository.PredictionRepository,
@@ -52,7 +70,7 @@ func NewPredictionJobWorker(
 	activityRepo repository.ActivityRepository,
 	mlClient ml.MLClient,
 	workerCount int,
-) *PredictionJobWorker {
+) PredictionJobWorker {
 	if workerCount <= 0 {
 		workerCount = 3
 	}
@@ -62,7 +80,7 @@ func NewPredictionJobWorker(
 		fmt.Printf("Warning: Failed to connect to Redis: %v\n", err)
 	}
 
-	return &PredictionJobWorker{
+	return &predictionJobWorker{
 		jobRepo:         jobRepo,
 		predRepo:        predRepo,
 		userRepo:        userRepo,
@@ -88,61 +106,9 @@ type RabbitMQPredictionResponse struct {
 	Error         *string                           `json:"error"`
 }
 
-// parseTimestamp safely parses the Python timestamp format
-func parseTimestamp(timestampStr string) time.Time {
-	// List of formats to try (including the one from Python)
-	formats := []string{
-		"2006-01-02T15:04:05.000000",  // Python's format: 2025-07-11T00:56:07.576363
-		"2006-01-02T15:04:05",         // Without microseconds
-		time.RFC3339,                  // 2006-01-02T15:04:05Z07:00
-		time.RFC3339Nano,              // 2006-01-02T15:04:05.999999999Z07:00
-		"2006-01-02T15:04:05Z",        // UTC format
-		"2006-01-02T15:04:05.000Z",    // UTC with milliseconds
-		"2006-01-02T15:04:05.000000Z", // UTC with microseconds
-		"2006-01-02 15:04:05",         // Space separated
-	}
+// ========== INTERFACE IMPLEMENTATIONS ==========
 
-	for _, format := range formats {
-		if parsedTime, err := time.Parse(format, timestampStr); err == nil {
-			return parsedTime
-		}
-	}
-
-	return time.Now()
-}
-
-// convertToModelsResponse converts RabbitMQPredictionResponse to models.PredictionResponse
-func convertToModelsResponse(rabbitResponse *RabbitMQPredictionResponse) *models.PredictionResponse {
-	// Convert explanation map
-	explanation := make(map[string]models.ExplanationItem)
-
-	for featureName, featureData := range rabbitResponse.Explanation {
-		explanationItem := models.ExplanationItem{}
-
-		if shap, ok := featureData["shap"].(float64); ok {
-			explanationItem.Shap = shap
-		}
-		if contribution, ok := featureData["contribution"].(float64); ok {
-			explanationItem.Contribution = contribution
-		}
-		if impact, ok := featureData["impact"].(float64); ok {
-			explanationItem.Impact = int(impact)
-		}
-
-		explanation[featureName] = explanationItem
-	}
-
-	return &models.PredictionResponse{
-		Prediction:  rabbitResponse.Prediction,
-		Explanation: explanation,
-		ElapsedTime: rabbitResponse.ElapsedTime,
-		Timestamp:   parseTimestamp(rabbitResponse.Timestamp),
-	}
-}
-
-// ========== WORKER LIFECYCLE ==========
-
-func (w *PredictionJobWorker) Start() {
+func (w *predictionJobWorker) Start() {
 	w.mu.Lock()
 	if w.running {
 		w.mu.Unlock()
@@ -168,7 +134,7 @@ func (w *PredictionJobWorker) Start() {
 	go w.cleanupRoutine()
 }
 
-func (w *PredictionJobWorker) Stop() {
+func (w *predictionJobWorker) Stop() {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
@@ -193,7 +159,49 @@ func (w *PredictionJobWorker) Stop() {
 	w.wg.Wait()
 }
 
-func (w *PredictionJobWorker) setupRabbitMQResponseHandler() error {
+func (w *predictionJobWorker) SubmitJob(jobRequest models.PredictionJobRequest) error {
+	w.mu.RLock()
+	if !w.running {
+		w.mu.RUnlock()
+		return fmt.Errorf("job worker is not running")
+	}
+	w.mu.RUnlock()
+
+	select {
+	case w.jobQueue <- jobRequest:
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("job queue is full, try again later")
+	}
+}
+
+func (w *predictionJobWorker) GetStatus() map[string]interface{} {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	return map[string]interface{}{
+		"running":            w.running,
+		"worker_count":       w.workerCount,
+		"queue_size":         len(w.jobQueue),
+		"queue_capacity":     cap(w.jobQueue),
+		"max_job_timeout":    w.maxJobTimeout.String(),
+		"cleanup_interval":   w.cleanupInterval.String(),
+		"rabbitmq_connected": w.conn != nil && !w.conn.IsClosed(),
+		"pattern":            "fire_and_forget",
+	}
+}
+
+func (w *predictionJobWorker) GetWhatIfResult(jobID string) (map[string]interface{}, bool, error) {
+	if w.redisClient == nil {
+		return nil, false, fmt.Errorf("Redis client not available")
+	}
+
+	return w.redisClient.GetWhatIfResult(jobID)
+}
+
+// ========== PRIVATE IMPLEMENTATION METHODS ==========
+
+func (w *predictionJobWorker) setupRabbitMQResponseHandler() error {
 	// Connect to RabbitMQ
 	var err error
 	w.conn, err = amqp.Dial("amqp://admin:password123@localhost:5672/")
@@ -241,7 +249,7 @@ func (w *PredictionJobWorker) setupRabbitMQResponseHandler() error {
 }
 
 // handleMLResponses processes ML responses independently of job submission
-func (w *PredictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
+func (w *predictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 	defer w.wg.Done()
 
 	for {
@@ -303,7 +311,7 @@ func (w *PredictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 }
 
 // handleSingleMLResponse processes a single ML response
-func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPredictionResponse) {
+func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPredictionResponse) {
 	jobID := rabbitResponse.CorrelationID
 
 	// Check if job exists and is in submitted state
@@ -370,7 +378,168 @@ func (w *PredictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 	// Complete the job
 	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, "completed", prediction.ID)
 }
-func (w *PredictionJobWorker) buildFeatureExplanations(response *models.PredictionResponse) map[string]map[string]interface{} {
+
+// worker processes jobs from the queue
+func (w *predictionJobWorker) worker(workerID int) {
+	defer w.wg.Done()
+
+	for {
+		select {
+		case <-w.stopChan:
+			return
+		case jobRequest := <-w.jobQueue:
+			w.processJobFireAndForget(jobRequest)
+		}
+	}
+}
+
+// processJobFireAndForget implements true fire-and-forget pattern
+func (w *predictionJobWorker) processJobFireAndForget(jobRequest models.PredictionJobRequest) {
+	jobID := jobRequest.JobID
+	userID := jobRequest.UserID
+
+	ctx, cancel := context.WithTimeout(context.Background(), w.maxJobTimeout)
+	defer cancel()
+
+	// ===== COLLECT ALL DATA FIRST =====
+	user, err := w.userRepo.GetUserByID(userID)
+	if err != nil {
+		errMsg := fmt.Sprintf("User not found: %v", err)
+		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		return
+	}
+
+	profile, err := w.profileRepo.FindByUserID(userID)
+	if err != nil {
+		errMsg := fmt.Sprintf("Profile not found: %v", err)
+		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		return
+	}
+
+	features, _, err := w.calculateFeaturesFromProfile(user, profile, userID, jobRequest.WhatIfInput)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to calculate features: %v", err)
+		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		return
+	}
+
+	// ===== SET TO PROCESSING =====
+	if err := w.jobRepo.UpdateJobStatus(jobID, models.JobStatusProcessing, nil); err != nil {
+		return
+	}
+
+	// ===== FIRE-AND-FORGET: SUBMIT TO ML SERVICE =====
+	correlationID := jobID
+	if err := w.mlClient.PredictAsync(ctx, correlationID, features); err != nil {
+		errMsg := fmt.Sprintf("Failed to submit to ML service: %v", err)
+		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		return
+	}
+
+	_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusSubmitted, nil)
+}
+
+// recoverPendingJobs recovers jobs that were pending during restart
+func (w *predictionJobWorker) recoverPendingJobs() {
+	defer w.wg.Done()
+
+	time.Sleep(5 * time.Second)
+
+	pendingJobs, err := w.jobRepo.GetPendingJobs(50)
+	if err != nil {
+		return
+	}
+
+	if len(pendingJobs) > 0 {
+		for _, job := range pendingJobs {
+			jobRequest := models.PredictionJobRequest{
+				JobID:  job.ID,
+				UserID: job.UserID,
+			}
+
+			select {
+			case w.jobQueue <- jobRequest:
+			case <-w.stopChan:
+				return
+			default:
+			}
+		}
+	}
+}
+
+// cleanupRoutine periodically cleans up old completed jobs
+func (w *predictionJobWorker) cleanupRoutine() {
+	defer w.wg.Done()
+
+	ticker := time.NewTicker(w.cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			cutoffTime := time.Now().AddDate(0, 0, -7)
+			_ = w.jobRepo.CleanupOldJobs(cutoffTime)
+		case <-w.stopChan:
+			return
+		}
+	}
+}
+
+// ========== HELPER METHODS ==========
+
+// parseTimestamp safely parses the Python timestamp format
+func parseTimestamp(timestampStr string) time.Time {
+	// List of formats to try (including the one from Python)
+	formats := []string{
+		"2006-01-02T15:04:05.000000",  // Python's format: 2025-07-11T00:56:07.576363
+		"2006-01-02T15:04:05",         // Without microseconds
+		time.RFC3339,                  // 2006-01-02T15:04:05Z07:00
+		time.RFC3339Nano,              // 2006-01-02T15:04:05.999999999Z07:00
+		"2006-01-02T15:04:05Z",        // UTC format
+		"2006-01-02T15:04:05.000Z",    // UTC with milliseconds
+		"2006-01-02T15:04:05.000000Z", // UTC with microseconds
+		"2006-01-02 15:04:05",         // Space separated
+	}
+
+	for _, format := range formats {
+		if parsedTime, err := time.Parse(format, timestampStr); err == nil {
+			return parsedTime
+		}
+	}
+
+	return time.Now()
+}
+
+// convertToModelsResponse converts RabbitMQPredictionResponse to models.PredictionResponse
+func convertToModelsResponse(rabbitResponse *RabbitMQPredictionResponse) *models.PredictionResponse {
+	// Convert explanation map
+	explanation := make(map[string]models.ExplanationItem)
+
+	for featureName, featureData := range rabbitResponse.Explanation {
+		explanationItem := models.ExplanationItem{}
+
+		if shap, ok := featureData["shap"].(float64); ok {
+			explanationItem.Shap = shap
+		}
+		if contribution, ok := featureData["contribution"].(float64); ok {
+			explanationItem.Contribution = contribution
+		}
+		if impact, ok := featureData["impact"].(float64); ok {
+			explanationItem.Impact = int(impact)
+		}
+
+		explanation[featureName] = explanationItem
+	}
+
+	return &models.PredictionResponse{
+		Prediction:  rabbitResponse.Prediction,
+		Explanation: explanation,
+		ElapsedTime: rabbitResponse.ElapsedTime,
+		Timestamp:   parseTimestamp(rabbitResponse.Timestamp),
+	}
+}
+
+func (w *predictionJobWorker) buildFeatureExplanations(response *models.PredictionResponse) map[string]map[string]interface{} {
 	featureExplanations := make(map[string]map[string]interface{})
 
 	features := []struct {
@@ -401,8 +570,7 @@ func (w *PredictionJobWorker) buildFeatureExplanations(response *models.Predicti
 	return featureExplanations
 }
 
-// Add this helper method
-func (w *PredictionJobWorker) isWhatIfJob(jobID string) bool {
+func (w *predictionJobWorker) isWhatIfJob(jobID string) bool {
 	job, err := w.jobRepo.GetJobByID(jobID)
 	if err != nil {
 		return false
@@ -410,7 +578,8 @@ func (w *PredictionJobWorker) isWhatIfJob(jobID string) bool {
 
 	return job.IsWhatIf
 }
-func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse) map[string]interface{} {
+
+func (w *predictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse) map[string]interface{} {
 	featureInfo := make(map[string]interface{})
 
 	for featureName, featureData := range response.Explanation {
@@ -457,119 +626,29 @@ func (w *PredictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitM
 	}
 
 	// Set default values for missing features
-	if _, exists := featureInfo["avg_smoke_count"]; !exists {
-		featureInfo["avg_smoke_count"] = 0
+	defaults := map[string]interface{}{
+		"avg_smoke_count":             0,
+		"age":                         0,
+		"smoking_status":              0,
+		"is_cholesterol":              false,
+		"is_macrosomic_baby":          0,
+		"physical_activity_frequency": 0,
+		"is_bloodline":                false,
+		"brinkman_score":              0,
+		"bmi":                         0.0,
+		"is_hypertension":             false,
 	}
-	if _, exists := featureInfo["age"]; !exists {
-		featureInfo["age"] = 0
-	}
-	if _, exists := featureInfo["smoking_status"]; !exists {
-		featureInfo["smoking_status"] = 0
-	}
-	if _, exists := featureInfo["is_cholesterol"]; !exists {
-		featureInfo["is_cholesterol"] = false
-	}
-	if _, exists := featureInfo["is_macrosomic_baby"]; !exists {
-		featureInfo["is_macrosomic_baby"] = 0
-	}
-	if _, exists := featureInfo["physical_activity_frequency"]; !exists {
-		featureInfo["physical_activity_frequency"] = 0
-	}
-	if _, exists := featureInfo["is_bloodline"]; !exists {
-		featureInfo["is_bloodline"] = false
-	}
-	if _, exists := featureInfo["brinkman_score"]; !exists {
-		featureInfo["brinkman_score"] = 0
-	}
-	if _, exists := featureInfo["bmi"]; !exists {
-		featureInfo["bmi"] = 0.0
-	}
-	if _, exists := featureInfo["is_hypertension"]; !exists {
-		featureInfo["is_hypertension"] = false
+
+	for key, defaultValue := range defaults {
+		if _, exists := featureInfo[key]; !exists {
+			featureInfo[key] = defaultValue
+		}
 	}
 
 	return featureInfo
 }
-func (w *PredictionJobWorker) SubmitJob(jobRequest models.PredictionJobRequest) error {
-	w.mu.RLock()
-	if !w.running {
-		w.mu.RUnlock()
-		return fmt.Errorf("job worker is not running")
-	}
-	w.mu.RUnlock()
 
-	select {
-	case w.jobQueue <- jobRequest:
-		return nil
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("job queue is full, try again later")
-	}
-}
-
-// ========== FIRE-AND-FORGET JOB WORKER ==========
-
-func (w *PredictionJobWorker) worker(workerID int) {
-	defer w.wg.Done()
-
-	for {
-		select {
-		case <-w.stopChan:
-			return
-		case jobRequest := <-w.jobQueue:
-			w.processJobFireAndForget(jobRequest)
-		}
-	}
-}
-
-// processJobFireAndForget implements true fire-and-forget pattern
-func (w *PredictionJobWorker) processJobFireAndForget(jobRequest models.PredictionJobRequest) {
-	jobID := jobRequest.JobID
-	userID := jobRequest.UserID
-
-	ctx, cancel := context.WithTimeout(context.Background(), w.maxJobTimeout)
-	defer cancel()
-
-	// ===== COLLECT ALL DATA FIRST =====
-	user, err := w.userRepo.GetUserByID(userID)
-	if err != nil {
-		errMsg := fmt.Sprintf("User not found: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
-		return
-	}
-
-	profile, err := w.profileRepo.FindByUserID(userID)
-	if err != nil {
-		errMsg := fmt.Sprintf("Profile not found: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
-		return
-	}
-
-	features, _, err := w.calculateFeaturesFromProfile(user, profile, userID, jobRequest.WhatIfInput)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to calculate features: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
-		return
-	}
-
-	// ===== SET TO PROCESSING =====
-	if err := w.jobRepo.UpdateJobStatus(jobID, models.JobStatusProcessing, nil); err != nil {
-		return
-	}
-
-	// ===== FIRE-AND-FORGET: SUBMIT TO ML SERVICE =====
-	correlationID := jobID
-	if err := w.mlClient.PredictAsync(ctx, correlationID, features); err != nil {
-		errMsg := fmt.Sprintf("Failed to submit to ML service: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
-		return
-	}
-
-	_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusSubmitted, nil)
-}
-
-// ========== HELPER METHODS (unchanged) ==========
-
-func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *models.PredictionResponse, featureInfo map[string]interface{}) *models.Prediction {
+func (w *predictionJobWorker) createPredictionRecord(userID uint, response *models.PredictionResponse, featureInfo map[string]interface{}) *models.Prediction {
 	getExplanation := func(key string) (float64, float64, float64) {
 		if exp, exists := response.Explanation[key]; exists {
 			return exp.Shap, exp.Contribution, float64(exp.Impact)
@@ -678,72 +757,18 @@ func (w *PredictionJobWorker) createPredictionRecord(userID uint, response *mode
 	}
 }
 
-// ========== REDIS CACHE UTILITIES (unchanged) ==========
-func (w *PredictionJobWorker) storeWhatIfResult(jobID string, result map[string]interface{}) error {
+func (w *predictionJobWorker) storeWhatIfResult(jobID string, result map[string]interface{}) error {
 	if w.redisClient == nil {
 		return fmt.Errorf("Redis client not available")
 	}
 
-	// Store for 1 hours
+	// Store for 1 hour
 	return w.redisClient.StoreWhatIfResult(jobID, result, 1*time.Hour)
 }
-func (w *PredictionJobWorker) GetWhatIfResult(jobID string) (map[string]interface{}, bool, error) {
-	if w.redisClient == nil {
-		return nil, false, fmt.Errorf("Redis client not available")
-	}
 
-	return w.redisClient.GetWhatIfResult(jobID)
-}
+// ========== FEATURE CALCULATION METHODS ==========
 
-// ========== BACKGROUND ROUTINES (unchanged) ==========
-
-func (w *PredictionJobWorker) recoverPendingJobs() {
-	defer w.wg.Done()
-
-	time.Sleep(5 * time.Second)
-
-	pendingJobs, err := w.jobRepo.GetPendingJobs(50)
-	if err != nil {
-		return
-	}
-
-	if len(pendingJobs) > 0 {
-		for _, job := range pendingJobs {
-			jobRequest := models.PredictionJobRequest{
-				JobID:  job.ID,
-				UserID: job.UserID,
-			}
-
-			select {
-			case w.jobQueue <- jobRequest:
-			case <-w.stopChan:
-				return
-			default:
-			}
-		}
-	}
-}
-
-func (w *PredictionJobWorker) cleanupRoutine() {
-	defer w.wg.Done()
-
-	ticker := time.NewTicker(w.cleanupInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			cutoffTime := time.Now().AddDate(0, 0, -7)
-			_ = w.jobRepo.CleanupOldJobs(cutoffTime)
-		case <-w.stopChan:
-			return
-		}
-	}
-}
-
-// ========== FEATURE CALCULATION (unchanged) ==========
-
-func (w *PredictionJobWorker) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *models.WhatIfInput) ([]float64, map[string]interface{}, error) {
+func (w *predictionJobWorker) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *models.WhatIfInput) ([]float64, map[string]interface{}, error) {
 	if user.DOB == nil {
 		return nil, nil, fmt.Errorf("date of birth is required but not found")
 	}
@@ -864,7 +889,7 @@ func (w *PredictionJobWorker) calculateFeaturesFromProfile(user *models.User, pr
 	return features, featureInfo, nil
 }
 
-func (w *PredictionJobWorker) calculateSmokingStatus(userID uint) (int, error) {
+func (w *predictionJobWorker) calculateSmokingStatus(userID uint) (int, error) {
 	profile, err := w.profileRepo.FindByUserID(userID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to retrieve user profile: %v", err)
@@ -936,7 +961,7 @@ func (w *PredictionJobWorker) calculateSmokingStatus(userID uint) (int, error) {
 	return 0, nil
 }
 
-func (w *PredictionJobWorker) calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
+func (w *predictionJobWorker) calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
 	now := time.Now()
 
 	ageOfSmoking := 0
@@ -984,7 +1009,7 @@ func (w *PredictionJobWorker) calculateBrinkmanIndex(user *models.User, profile 
 	}
 }
 
-func (w *PredictionJobWorker) calculatePhysicalActivityFrequency(userID uint, profile *models.UserProfile) (int, error) {
+func (w *predictionJobWorker) calculatePhysicalActivityFrequency(userID uint, profile *models.UserProfile) (int, error) {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -7)
 
@@ -1007,27 +1032,10 @@ func (w *PredictionJobWorker) calculatePhysicalActivityFrequency(userID uint, pr
 	return totalFrequency, nil
 }
 
-// ========== HELPER UTILITIES ==========
-
-func (w *PredictionJobWorker) boolToFloat(b bool) float64 {
+// boolToFloat converts boolean to float64 (1.0 for true, 0.0 for false)
+func (w *predictionJobWorker) boolToFloat(b bool) float64 {
 	if b {
 		return 1.0
 	}
 	return 0.0
-}
-
-func (w *PredictionJobWorker) GetStatus() map[string]interface{} {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
-	return map[string]interface{}{
-		"running":            w.running,
-		"worker_count":       w.workerCount,
-		"queue_size":         len(w.jobQueue),
-		"queue_capacity":     cap(w.jobQueue),
-		"max_job_timeout":    w.maxJobTimeout.String(),
-		"cleanup_interval":   w.cleanupInterval.String(),
-		"rabbitmq_connected": w.conn != nil && !w.conn.IsClosed(),
-		"pattern":            "fire_and_forget",
-	}
 }
