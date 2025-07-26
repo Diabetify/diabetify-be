@@ -314,29 +314,32 @@ func (w *predictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPredictionResponse) {
 	jobID := rabbitResponse.CorrelationID
 
-	// Check if job exists and is in submitted state
 	job, err := w.jobRepo.GetJobByID(jobID)
 	if err != nil {
+		fmt.Printf("Error: could not find job %s: %v\n", jobID, err)
 		return
 	}
 
 	if job.Status != "submitted" {
+		fmt.Printf("Info: job %s already processed with status %s\n", jobID, job.Status)
 		return
 	}
 
-	// Handle error response
 	if rabbitResponse.Error != nil {
 		errMsg := *rabbitResponse.Error
 		_ = w.jobRepo.UpdateJobStatus(jobID, "failed", &errMsg)
 		return
 	}
 
-	// Convert response
 	modelResponse := convertToModelsResponse(rabbitResponse)
 
+	var avgSmokeCount int
 	if w.isWhatIfJob(jobID) {
-		// ===== STORE WHAT-IF RESULT IN REDIS =====
-		featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse)
+		// For What-If jobs, the avgSmokeCount was part of the transient input.
+		// Without storing the original What-If input with the job, we can't retrieve it here.
+		// So, we default to 0. This could be enhanced by storing the input in Redis.
+		avgSmokeCount = 0
+		featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse, avgSmokeCount)
 
 		whatIfResult := map[string]interface{}{
 			"job_id":               jobID,
@@ -349,21 +352,23 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 			"processing_time":      time.Since(job.CreatedAt).String(),
 		}
 
-		// Store in Redis
 		if err := w.storeWhatIfResult(jobID, whatIfResult); err != nil {
 			fmt.Printf("Warning: Failed to store what-if result in Redis: %v\n", err)
 		}
-
-		// Complete job (no prediction ID)
 		_ = w.jobRepo.UpdateJobStatus(jobID, "completed", nil)
 		return
 	}
 
 	// ===== REGULAR PREDICTION - SAVE TO DATABASE =====
-	// Extract feature info from ML response (only for regular predictions)
-	featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse)
+	var calcErr error
+	avgSmokeCount, calcErr = w.getAverageUserSmokeCount(job.UserID)
+	if calcErr != nil {
+		fmt.Printf("Warning: failed to calculate average smoke count for user %d: %v. Defaulting to 0.\n", job.UserID, calcErr)
+		avgSmokeCount = 0
+	}
 
-	// Create and save prediction (only regular predictions)
+	featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse, avgSmokeCount)
+
 	prediction := w.createPredictionRecord(job.UserID, modelResponse, featureInfo)
 	if err := w.predRepo.SavePrediction(prediction); err != nil {
 		errMsg := fmt.Sprintf("Failed to save prediction: %v", err)
@@ -371,11 +376,9 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 		return
 	}
 
-	// Update user timestamp (only for regular predictions)
 	now := time.Now()
 	_ = w.userRepo.UpdateLastPredictionTime(job.UserID, &now)
 
-	// Complete the job
 	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, "completed", prediction.ID)
 }
 
@@ -579,7 +582,7 @@ func (w *predictionJobWorker) isWhatIfJob(jobID string) bool {
 	return job.IsWhatIf
 }
 
-func (w *predictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse) map[string]interface{} {
+func (w *predictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitMQPredictionResponse, avgSmokeCount int) map[string]interface{} {
 	featureInfo := make(map[string]interface{})
 
 	for featureName, featureData := range response.Explanation {
@@ -627,7 +630,7 @@ func (w *predictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitM
 
 	// Set default values for missing features
 	defaults := map[string]interface{}{
-		"avg_smoke_count":             0,
+		"avg_smoke_count":             avgSmokeCount,
 		"age":                         0,
 		"smoking_status":              0,
 		"is_cholesterol":              false,
@@ -767,6 +770,99 @@ func (w *predictionJobWorker) storeWhatIfResult(jobID string, result map[string]
 }
 
 // ========== FEATURE CALCULATION METHODS ==========
+func (w *predictionJobWorker) getAverageUserSmokeCount(userID uint) (int, error) {
+	// 1. Fetch all required data
+	user, err := w.userRepo.GetUserByID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get user %d for smoke count: %v", userID, err)
+	}
+
+	profile, err := w.profileRepo.FindByUserID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get profile for user %d for smoke count: %v", userID, err)
+	}
+
+	activities, err := w.activityRepo.GetActivitiesByUserIDAndType(userID, "smoke")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get smoke activities for user %d: %v", userID, err)
+	}
+
+	// If there are no logged activities, we cannot calculate an average.
+	// We can fallback to a manually entered value if it exists.
+	if len(activities) == 0 {
+		if profile != nil && profile.SmokeCount != nil {
+			return *profile.SmokeCount, nil
+		}
+		return 0, nil // Return 0 as a safe default if no data is available
+	}
+
+	// 2. Calculate total cigarettes smoked from activities
+	totalSmoked := 0
+	for _, activity := range activities {
+		totalSmoked += activity.Value
+	}
+
+	// 3. Attempt to calculate lifetime average
+	if user != nil && user.DOB != nil && profile != nil && profile.AgeOfSmoking != nil {
+		var dobTime time.Time
+		var parseErr error
+
+		dobTime, parseErr = time.Parse(time.RFC3339, *user.DOB)
+		if parseErr != nil {
+			dobTime, parseErr = time.Parse("2006-01-02", *user.DOB)
+		}
+
+		// Proceed only if DOB was parsed successfully
+		if parseErr == nil {
+			now := time.Now()
+			age := now.Year() - dobTime.Year()
+			if now.YearDay() < dobTime.YearDay() {
+				age--
+			}
+
+			ageOfStartSmoking := *profile.AgeOfSmoking
+			if age > ageOfStartSmoking {
+				// Calculate the date the user started smoking.
+				startSmokingDate := dobTime.AddDate(ageOfStartSmoking, 0, 0)
+
+				// Calculate duration in days since starting to smoke.
+				durationDays := time.Since(startSmokingDate).Hours() / 24
+
+				if durationDays >= 1 {
+					average := float64(totalSmoked) / durationDays
+					return int(math.Round(average)), nil
+				}
+			}
+		}
+	}
+
+	// 4. Fallback: Calculate average based on activity log's time span.
+	if len(activities) == 1 {
+		return activities[0].Value, nil
+	}
+
+	firstDate := activities[0].ActivityDate
+	lastDate := activities[0].ActivityDate
+
+	// Find the first and last activity dates
+	for _, activity := range activities {
+		if activity.ActivityDate.Before(firstDate) {
+			firstDate = activity.ActivityDate
+		}
+		if activity.ActivityDate.After(lastDate) {
+			lastDate = activity.ActivityDate
+		}
+	}
+
+	// Calculate duration of the observation period in days, inclusive.
+	durationDays := int(lastDate.Sub(firstDate).Hours()/24) + 1
+	if durationDays <= 0 {
+		durationDays = 1
+	}
+
+	average := float64(totalSmoked) / float64(durationDays)
+	return int(math.Round(average)), nil
+}
 
 func (w *predictionJobWorker) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *models.WhatIfInput) ([]float64, map[string]interface{}, error) {
 	if user.DOB == nil {
@@ -836,17 +932,15 @@ func (w *predictionJobWorker) calculateFeaturesFromProfile(user *models.User, pr
 			return nil, nil, fmt.Errorf("failed to calculate physical activity: %v", err)
 		}
 
-		if profile.SmokeCount != nil {
-			avgSmokeCount = *profile.SmokeCount
-			brinkmanIndex, err = w.calculateBrinkmanIndex(user, profile, avgSmokeCount)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
-			}
-		} else {
-			avgSmokeCount = 0
-			brinkmanIndex = 0
+		avgSmokeCount, err = w.getAverageUserSmokeCount(userID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate average smoke count: %v", err)
 		}
 
+		brinkmanIndex, err = w.calculateBrinkmanIndex(user, profile, avgSmokeCount)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
+		}
 	} else {
 		smokingStatus = input.SmokingStatus
 		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
