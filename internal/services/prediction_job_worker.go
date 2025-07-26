@@ -202,7 +202,6 @@ func (w *predictionJobWorker) GetWhatIfResult(jobID string) (map[string]interfac
 // ========== PRIVATE IMPLEMENTATION METHODS ==========
 
 func (w *predictionJobWorker) setupRabbitMQResponseHandler() error {
-	// Connect to RabbitMQ
 	var err error
 	w.conn, err = amqp.Dial("amqp://admin:password123@localhost:5672/")
 	if err != nil {
@@ -214,44 +213,28 @@ func (w *predictionJobWorker) setupRabbitMQResponseHandler() error {
 		return fmt.Errorf("failed to open channel: %v", err)
 	}
 
-	// Declare the response queue
 	_, err = w.responseChannel.QueueDeclare(
-		"ml.prediction.hybrid_response", // name
-		true,                            // durable
-		false,                           // delete when unused
-		false,                           // exclusive
-		false,                           // no-wait
-		nil,                             // arguments
+		"ml.prediction.hybrid_response", true, false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to declare queue: %v", err)
 	}
 
-	// Start consuming responses
 	msgs, err := w.responseChannel.Consume(
-		"ml.prediction.hybrid_response", // queue
-		"response_handler",              // consumer
-		false,                           // auto-ack
-		false,                           // exclusive
-		false,                           // no-local
-		false,                           // no-wait
-		nil,                             // args
+		"ml.prediction.hybrid_response", "response_handler", false, false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register consumer: %v", err)
 	}
 
-	// Start response handler (independent of job workers)
 	w.wg.Add(1)
 	go w.handleMLResponses(msgs)
 
 	return nil
 }
 
-// handleMLResponses processes ML responses independently of job submission
 func (w *predictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 	defer w.wg.Done()
-
 	for {
 		select {
 		case <-w.stopChan:
@@ -260,68 +243,27 @@ func (w *predictionJobWorker) handleMLResponses(msgs <-chan amqp.Delivery) {
 			if !ok {
 				return
 			}
-
-			// LOG RAW MESSAGE FIRST
-			fmt.Printf("=== RAW RABBITMQ MESSAGE ===\n")
-			fmt.Printf("Raw Body: %s\n", string(msg.Body))
-			fmt.Printf("Headers: %+v\n", msg.Headers)
-			fmt.Printf("CorrelationId: %s\n", msg.CorrelationId)
-			fmt.Printf("========================\n")
-
-			// Parse response
 			var rabbitResponse RabbitMQPredictionResponse
 			if err := json.Unmarshal(msg.Body, &rabbitResponse); err != nil {
-				fmt.Printf("ERROR: Failed to unmarshal RabbitMQ message: %v\n", err)
-				fmt.Printf("Raw message body: %s\n", string(msg.Body))
+				fmt.Printf("ERROR: Failed to unmarshal RabbitMQ message for CorrelationID %s: %v\n", msg.CorrelationId, err)
 				msg.Nack(false, false)
 				continue
 			}
-
-			// LOG PARSED RESPONSE DETAILS
-			fmt.Printf("=== PARSED RABBITMQ RESPONSE ===\n")
-			fmt.Printf("Correlation ID: %s\n", rabbitResponse.CorrelationID)
-			fmt.Printf("Prediction: %f\n", rabbitResponse.Prediction)
-			fmt.Printf("Elapsed Time: %f\n", rabbitResponse.ElapsedTime)
-			fmt.Printf("Timestamp: %s\n", rabbitResponse.Timestamp)
-
-			if rabbitResponse.Error != nil {
-				fmt.Printf("Error: %s\n", *rabbitResponse.Error)
-			} else {
-				fmt.Printf("Error: nil\n")
-			}
-
-			// LOG DETAILED EXPLANATION
-			fmt.Printf("=== FEATURE EXPLANATIONS ===\n")
-			for featureName, featureData := range rabbitResponse.Explanation {
-				fmt.Printf("Feature: %s\n", featureName)
-				for key, value := range featureData {
-					fmt.Printf("  %s: %v (type: %T)\n", key, value, value)
-				}
-				fmt.Printf("---\n")
-			}
-			fmt.Printf("========================\n")
-
-			// Handle the response (fire-and-forget completion)
 			w.handleSingleMLResponse(&rabbitResponse)
-
-			// Acknowledge message
 			_ = msg.Ack(false)
 		}
 	}
 }
 
-// handleSingleMLResponse processes a single ML response
 func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPredictionResponse) {
 	jobID := rabbitResponse.CorrelationID
 
 	job, err := w.jobRepo.GetJobByID(jobID)
 	if err != nil {
-		fmt.Printf("Error: could not find job %s: %v\n", jobID, err)
 		return
 	}
 
 	if job.Status != "submitted" {
-		fmt.Printf("Info: job %s already processed with status %s\n", jobID, job.Status)
 		return
 	}
 
@@ -333,14 +275,8 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 
 	modelResponse := convertToModelsResponse(rabbitResponse)
 
-	var avgSmokeCount int
 	if w.isWhatIfJob(jobID) {
-		// For What-If jobs, the avgSmokeCount was part of the transient input.
-		// Without storing the original What-If input with the job, we can't retrieve it here.
-		// So, we default to 0. This could be enhanced by storing the input in Redis.
-		avgSmokeCount = 0
-		featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse, avgSmokeCount)
-
+		featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse, 0)
 		whatIfResult := map[string]interface{}{
 			"job_id":               jobID,
 			"job_type":             "what_if",
@@ -351,7 +287,6 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 			"timestamp":            time.Now(),
 			"processing_time":      time.Since(job.CreatedAt).String(),
 		}
-
 		if err := w.storeWhatIfResult(jobID, whatIfResult); err != nil {
 			fmt.Printf("Warning: Failed to store what-if result in Redis: %v\n", err)
 		}
@@ -360,6 +295,7 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 	}
 
 	// ===== REGULAR PREDICTION - SAVE TO DATABASE =====
+	var avgSmokeCount int
 	var calcErr error
 	avgSmokeCount, calcErr = w.getAverageUserSmokeCount(job.UserID)
 	if calcErr != nil {
@@ -370,6 +306,7 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 	featureInfo := w.extractFeatureInfoFromMLResponse(rabbitResponse, avgSmokeCount)
 
 	prediction := w.createPredictionRecord(job.UserID, modelResponse, featureInfo)
+
 	if err := w.predRepo.SavePrediction(prediction); err != nil {
 		errMsg := fmt.Sprintf("Failed to save prediction: %v", err)
 		_ = w.jobRepo.UpdateJobStatus(jobID, "failed", &errMsg)
@@ -382,10 +319,8 @@ func (w *predictionJobWorker) handleSingleMLResponse(rabbitResponse *RabbitMQPre
 	_ = w.jobRepo.UpdateJobStatusWithResult(jobID, "completed", prediction.ID)
 }
 
-// worker processes jobs from the queue
 func (w *predictionJobWorker) worker(workerID int) {
 	defer w.wg.Done()
-
 	for {
 		select {
 		case <-w.stopChan:
@@ -396,7 +331,6 @@ func (w *predictionJobWorker) worker(workerID int) {
 	}
 }
 
-// processJobFireAndForget implements true fire-and-forget pattern
 func (w *predictionJobWorker) processJobFireAndForget(jobRequest models.PredictionJobRequest) {
 	jobID := jobRequest.JobID
 	userID := jobRequest.UserID
@@ -404,79 +338,66 @@ func (w *predictionJobWorker) processJobFireAndForget(jobRequest models.Predicti
 	ctx, cancel := context.WithTimeout(context.Background(), w.maxJobTimeout)
 	defer cancel()
 
-	// ===== COLLECT ALL DATA FIRST =====
 	user, err := w.userRepo.GetUserByID(userID)
 	if err != nil {
 		errMsg := fmt.Sprintf("User not found: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
 		return
 	}
 
 	profile, err := w.profileRepo.FindByUserID(userID)
 	if err != nil {
 		errMsg := fmt.Sprintf("Profile not found: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
 		return
 	}
 
 	features, _, err := w.calculateFeaturesFromProfile(user, profile, userID, jobRequest.WhatIfInput)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to calculate features: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
 		return
 	}
 
-	// ===== SET TO PROCESSING =====
 	if err := w.jobRepo.UpdateJobStatus(jobID, models.JobStatusProcessing, nil); err != nil {
 		return
 	}
 
-	// ===== FIRE-AND-FORGET: SUBMIT TO ML SERVICE =====
 	correlationID := jobID
 	if err := w.mlClient.PredictAsync(ctx, correlationID, features); err != nil {
 		errMsg := fmt.Sprintf("Failed to submit to ML service: %v", err)
-		w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
+		_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusFailed, &errMsg)
 		return
 	}
 
 	_ = w.jobRepo.UpdateJobStatus(jobID, models.JobStatusSubmitted, nil)
 }
 
-// recoverPendingJobs recovers jobs that were pending during restart
 func (w *predictionJobWorker) recoverPendingJobs() {
 	defer w.wg.Done()
-
 	time.Sleep(5 * time.Second)
-
 	pendingJobs, err := w.jobRepo.GetPendingJobs(50)
 	if err != nil {
 		return
 	}
-
-	if len(pendingJobs) > 0 {
-		for _, job := range pendingJobs {
-			jobRequest := models.PredictionJobRequest{
-				JobID:  job.ID,
-				UserID: job.UserID,
-			}
-
-			select {
-			case w.jobQueue <- jobRequest:
-			case <-w.stopChan:
-				return
-			default:
-			}
+	for _, job := range pendingJobs {
+		jobRequest := models.PredictionJobRequest{
+			JobID:  job.ID,
+			UserID: job.UserID,
+		}
+		select {
+		case w.jobQueue <- jobRequest:
+		case <-w.stopChan:
+			return
+		default:
 		}
 	}
 }
 
-// cleanupRoutine periodically cleans up old completed jobs
 func (w *predictionJobWorker) cleanupRoutine() {
 	defer w.wg.Done()
-
 	ticker := time.NewTicker(w.cleanupInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
@@ -490,50 +411,34 @@ func (w *predictionJobWorker) cleanupRoutine() {
 
 // ========== HELPER METHODS ==========
 
-// parseTimestamp safely parses the Python timestamp format
 func parseTimestamp(timestampStr string) time.Time {
-	// List of formats to try (including the one from Python)
 	formats := []string{
-		"2006-01-02T15:04:05.000000",  // Python's format: 2025-07-11T00:56:07.576363
-		"2006-01-02T15:04:05",         // Without microseconds
-		time.RFC3339,                  // 2006-01-02T15:04:05Z07:00
-		time.RFC3339Nano,              // 2006-01-02T15:04:05.999999999Z07:00
-		"2006-01-02T15:04:05Z",        // UTC format
-		"2006-01-02T15:04:05.000Z",    // UTC with milliseconds
-		"2006-01-02T15:04:05.000000Z", // UTC with microseconds
-		"2006-01-02 15:04:05",         // Space separated
+		"2006-01-02T15:04:05.000000", "2006-01-02T15:04:05", time.RFC3339, time.RFC3339Nano,
+		"2006-01-02T15:04:05Z", "2006-01-02T15:04:05.000Z", "2006-01-02T15:04:05.000000Z", "2006-01-02 15:04:05",
 	}
-
 	for _, format := range formats {
 		if parsedTime, err := time.Parse(format, timestampStr); err == nil {
 			return parsedTime
 		}
 	}
-
 	return time.Now()
 }
 
-// convertToModelsResponse converts RabbitMQPredictionResponse to models.PredictionResponse
 func convertToModelsResponse(rabbitResponse *RabbitMQPredictionResponse) *models.PredictionResponse {
-	// Convert explanation map
 	explanation := make(map[string]models.ExplanationItem)
-
 	for featureName, featureData := range rabbitResponse.Explanation {
-		explanationItem := models.ExplanationItem{}
-
+		item := models.ExplanationItem{}
 		if shap, ok := featureData["shap"].(float64); ok {
-			explanationItem.Shap = shap
+			item.Shap = shap
 		}
 		if contribution, ok := featureData["contribution"].(float64); ok {
-			explanationItem.Contribution = contribution
+			item.Contribution = contribution
 		}
 		if impact, ok := featureData["impact"].(float64); ok {
-			explanationItem.Impact = int(impact)
+			item.Impact = int(impact)
 		}
-
-		explanation[featureName] = explanationItem
+		explanation[featureName] = item
 	}
-
 	return &models.PredictionResponse{
 		Prediction:  rabbitResponse.Prediction,
 		Explanation: explanation,
@@ -543,34 +448,19 @@ func convertToModelsResponse(rabbitResponse *RabbitMQPredictionResponse) *models
 }
 
 func (w *predictionJobWorker) buildFeatureExplanations(response *models.PredictionResponse) map[string]map[string]interface{} {
-	featureExplanations := make(map[string]map[string]interface{})
-
-	features := []struct {
-		name string
-		key  string
-	}{
-		{"age", "age"},
-		{"BMI", "BMI"},
-		{"brinkman_index", "brinkman_index"},
-		{"is_hypertension", "is_hypertension"},
-		{"is_cholesterol", "is_cholesterol"},
-		{"is_bloodline", "is_bloodline"},
-		{"is_macrosomic_baby", "is_macrosomic_baby"},
-		{"smoking_status", "smoking_status"},
-		{"moderate_physical_activity_frequency", "moderate_physical_activity_frequency"},
+	explanations := make(map[string]map[string]interface{})
+	features := []struct{ name, key string }{
+		{"age", "age"}, {"BMI", "BMI"}, {"brinkman_index", "brinkman_index"},
+		{"is_hypertension", "is_hypertension"}, {"is_cholesterol", "is_cholesterol"},
+		{"is_bloodline", "is_bloodline"}, {"is_macrosomic_baby", "is_macrosomic_baby"},
+		{"smoking_status", "smoking_status"}, {"moderate_physical_activity_frequency", "moderate_physical_activity_frequency"},
 	}
-
-	for _, feature := range features {
-		if exp, exists := response.Explanation[feature.key]; exists {
-			featureExplanations[feature.name] = map[string]interface{}{
-				"shap":         exp.Shap,
-				"contribution": exp.Contribution,
-				"impact":       exp.Impact,
-			}
+	for _, f := range features {
+		if exp, ok := response.Explanation[f.key]; ok {
+			explanations[f.name] = map[string]interface{}{"shap": exp.Shap, "contribution": exp.Contribution, "impact": exp.Impact}
 		}
 	}
-
-	return featureExplanations
+	return explanations
 }
 
 func (w *predictionJobWorker) isWhatIfJob(jobID string) bool {
@@ -578,7 +468,6 @@ func (w *predictionJobWorker) isWhatIfJob(jobID string) bool {
 	if err != nil {
 		return false
 	}
-
 	return job.IsWhatIf
 }
 
@@ -589,64 +478,48 @@ func (w *predictionJobWorker) extractFeatureInfoFromMLResponse(response *RabbitM
 		if value, exists := featureData["value"]; exists && value != nil {
 			switch featureName {
 			case "age":
-				if ageFloat, ok := value.(float64); ok {
-					featureInfo["age"] = int(ageFloat)
+				if v, ok := value.(float64); ok {
+					featureInfo["age"] = int(v)
 				}
 			case "smoking_status":
-				if smokingFloat, ok := value.(float64); ok {
-					featureInfo["smoking_status"] = int(smokingFloat)
+				if v, ok := value.(float64); ok {
+					featureInfo["smoking_status"] = int(v)
 				}
 			case "is_cholesterol":
-				if cholesterolFloat, ok := value.(float64); ok {
-					featureInfo["is_cholesterol"] = cholesterolFloat == 1.0
+				if v, ok := value.(float64); ok {
+					featureInfo["is_cholesterol"] = v == 1.0
 				}
 			case "is_macrosomic_baby":
-				if macrosomicFloat, ok := value.(float64); ok {
-					featureInfo["is_macrosomic_baby"] = int(macrosomicFloat)
+				if v, ok := value.(float64); ok {
+					featureInfo["is_macrosomic_baby"] = int(v)
 				}
 			case "moderate_physical_activity_frequency":
-				if activityFloat, ok := value.(float64); ok {
-					featureInfo["physical_activity_frequency"] = int(activityFloat)
+				if v, ok := value.(float64); ok {
+					featureInfo["physical_activity_frequency"] = int(v)
 				}
 			case "is_bloodline":
-				if bloodlineFloat, ok := value.(float64); ok {
-					featureInfo["is_bloodline"] = bloodlineFloat == 1.0
+				if v, ok := value.(float64); ok {
+					featureInfo["is_bloodline"] = v == 1.0
 				}
 			case "brinkman_index":
-				if brinkmanFloat, ok := value.(float64); ok {
-					featureInfo["brinkman_score"] = int(brinkmanFloat)
+				if v, ok := value.(float64); ok {
+					featureInfo["brinkman_score"] = int(v)
 				}
 			case "BMI":
-				if bmiFloat, ok := value.(float64); ok {
-					featureInfo["bmi"] = bmiFloat
+				if v, ok := value.(float64); ok {
+					featureInfo["bmi"] = v
 				}
 			case "is_hypertension":
-				if hypertensionFloat, ok := value.(float64); ok {
-					featureInfo["is_hypertension"] = hypertensionFloat == 1.0
+				if v, ok := value.(float64); ok {
+					featureInfo["is_hypertension"] = v == 1.0
 				}
 			}
 		}
 	}
 
-	// Set default values for missing features
-	defaults := map[string]interface{}{
-		"avg_smoke_count":             avgSmokeCount,
-		"age":                         0,
-		"smoking_status":              0,
-		"is_cholesterol":              false,
-		"is_macrosomic_baby":          0,
-		"physical_activity_frequency": 0,
-		"is_bloodline":                false,
-		"brinkman_score":              0,
-		"bmi":                         0.0,
-		"is_hypertension":             false,
-	}
-
-	for key, defaultValue := range defaults {
-		if _, exists := featureInfo[key]; !exists {
-			featureInfo[key] = defaultValue
-		}
-	}
+	// The ML model does not know about avg_smoke_count, so it's never in the response.
+	// We must add it here manually from the value we calculated.
+	featureInfo["avg_smoke_count"] = avgSmokeCount
 
 	return featureInfo
 }
@@ -659,42 +532,29 @@ func (w *predictionJobWorker) createPredictionRecord(userID uint, response *mode
 		return 0.0, 0.0, 0.0
 	}
 
-	// Helper functions with nil safety
 	getInt := func(key string) int {
-		if val, exists := featureInfo[key]; exists && val != nil {
-			if intVal, ok := val.(int); ok {
-				return intVal
-			}
-			if floatVal, ok := val.(float64); ok {
-				return int(floatVal)
-			}
+		if val, ok := featureInfo[key].(int); ok {
+			return val
+		}
+		if val, ok := featureInfo[key].(float64); ok {
+			return int(val)
 		}
 		return 0
 	}
 
 	getFloat := func(key string) float64 {
-		if val, exists := featureInfo[key]; exists && val != nil {
-			if floatVal, ok := val.(float64); ok {
-				return floatVal
-			}
-			if intVal, ok := val.(int); ok {
-				return float64(intVal)
-			}
+		if val, ok := featureInfo[key].(float64); ok {
+			return val
+		}
+		if val, ok := featureInfo[key].(int); ok {
+			return float64(val)
 		}
 		return 0.0
 	}
 
 	getBool := func(key string) bool {
-		if val, exists := featureInfo[key]; exists && val != nil {
-			if boolVal, ok := val.(bool); ok {
-				return boolVal
-			}
-			if floatVal, ok := val.(float64); ok {
-				return floatVal == 1.0
-			}
-			if intVal, ok := val.(int); ok {
-				return intVal == 1
-			}
+		if val, ok := featureInfo[key].(bool); ok {
+			return val
 		}
 		return false
 	}
@@ -757,6 +617,8 @@ func (w *predictionJobWorker) createPredictionRecord(userID uint, response *mode
 		PhysicalActivityFrequencyShap:         activityShap,
 		PhysicalActivityFrequencyContribution: activityContribution,
 		PhysicalActivityFrequencyImpact:       activityImpact,
+
+		AvgSmokeCount: getInt("avg_smoke_count"),
 	}
 }
 
@@ -764,87 +626,71 @@ func (w *predictionJobWorker) storeWhatIfResult(jobID string, result map[string]
 	if w.redisClient == nil {
 		return fmt.Errorf("Redis client not available")
 	}
-
-	// Store for 1 hour
 	return w.redisClient.StoreWhatIfResult(jobID, result, 1*time.Hour)
 }
 
 // ========== FEATURE CALCULATION METHODS ==========
-func (w *predictionJobWorker) getAverageUserSmokeCount(userID uint) (int, error) {
-	// 1. Fetch all required data
-	user, err := w.userRepo.GetUserByID(userID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get user %d for smoke count: %v", userID, err)
-	}
 
+func (w *predictionJobWorker) getAverageUserSmokeCount(userID uint) (int, error) {
 	profile, err := w.profileRepo.FindByUserID(userID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get profile for user %d for smoke count: %v", userID, err)
 	}
 
+	// --- NEW LOGIC: Prioritize self-reported smoke count ---
+	if profile != nil && profile.SmokeCount != nil && *profile.SmokeCount > 0 {
+		return *profile.SmokeCount, nil
+	}
+
+	// Fallback to activity-based calculation only if profile.SmokeCount is not available.
+	user, err := w.userRepo.GetUserByID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get user %d for smoke count: %v", userID, err)
+	}
 	activities, err := w.activityRepo.GetActivitiesByUserIDAndType(userID, "smoke")
 	if err != nil {
 		return 0, fmt.Errorf("failed to get smoke activities for user %d: %v", userID, err)
 	}
 
-	// If there are no logged activities, we cannot calculate an average.
-	// We can fallback to a manually entered value if it exists.
 	if len(activities) == 0 {
-		if profile != nil && profile.SmokeCount != nil {
-			return *profile.SmokeCount, nil
-		}
-		return 0, nil // Return 0 as a safe default if no data is available
+		return 0, nil
 	}
 
-	// 2. Calculate total cigarettes smoked from activities
 	totalSmoked := 0
 	for _, activity := range activities {
 		totalSmoked += activity.Value
 	}
 
-	// 3. Attempt to calculate lifetime average
 	if user != nil && user.DOB != nil && profile != nil && profile.AgeOfSmoking != nil {
 		var dobTime time.Time
 		var parseErr error
-
 		dobTime, parseErr = time.Parse(time.RFC3339, *user.DOB)
 		if parseErr != nil {
 			dobTime, parseErr = time.Parse("2006-01-02", *user.DOB)
 		}
-
-		// Proceed only if DOB was parsed successfully
 		if parseErr == nil {
 			now := time.Now()
 			age := now.Year() - dobTime.Year()
 			if now.YearDay() < dobTime.YearDay() {
 				age--
 			}
-
 			ageOfStartSmoking := *profile.AgeOfSmoking
 			if age > ageOfStartSmoking {
-				// Calculate the date the user started smoking.
 				startSmokingDate := dobTime.AddDate(ageOfStartSmoking, 0, 0)
-
-				// Calculate duration in days since starting to smoke.
 				durationDays := time.Since(startSmokingDate).Hours() / 24
-
 				if durationDays >= 1 {
 					average := float64(totalSmoked) / durationDays
-					return int(math.Round(average)), nil
+					return int(math.Ceil(average)), nil
 				}
 			}
 		}
 	}
 
-	// 4. Fallback: Calculate average based on activity log's time span.
 	if len(activities) == 1 {
 		return activities[0].Value, nil
 	}
-
 	firstDate := activities[0].ActivityDate
 	lastDate := activities[0].ActivityDate
-
-	// Find the first and last activity dates
 	for _, activity := range activities {
 		if activity.ActivityDate.Before(firstDate) {
 			firstDate = activity.ActivityDate
@@ -853,15 +699,12 @@ func (w *predictionJobWorker) getAverageUserSmokeCount(userID uint) (int, error)
 			lastDate = activity.ActivityDate
 		}
 	}
-
-	// Calculate duration of the observation period in days, inclusive.
 	durationDays := int(lastDate.Sub(firstDate).Hours()/24) + 1
 	if durationDays <= 0 {
 		durationDays = 1
 	}
-
 	average := float64(totalSmoked) / float64(durationDays)
-	return int(math.Round(average)), nil
+	return int(math.Ceil(average)), nil
 }
 
 func (w *predictionJobWorker) calculateFeaturesFromProfile(user *models.User, profile *models.UserProfile, userID uint, input *models.WhatIfInput) ([]float64, map[string]interface{}, error) {
@@ -941,6 +784,7 @@ func (w *predictionJobWorker) calculateFeaturesFromProfile(user *models.User, pr
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to calculate Brinkman index: %v", err)
 		}
+
 	} else {
 		smokingStatus = input.SmokingStatus
 		bmi = float64(input.Weight) / math.Pow(float64(*profile.Height)/100, 2)
@@ -997,26 +841,15 @@ func (w *predictionJobWorker) calculateSmokingStatus(userID uint) (int, error) {
 	var currentAge int
 	if user.DOB != nil && *user.DOB != "" {
 		var dobTime time.Time
-		var err error
-
-		formats := []string{
-			"2006-01-02T15:04:05Z",
-			"2006-01-02T15:04:05",
-			"2006-01-02 15:04:05",
-			"2006-01-02",
-		}
-
+		formats := []string{"2006-01-02T15:04:05Z", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"}
 		for _, format := range formats {
-			dobTime, err = time.Parse(format, *user.DOB)
-			if err == nil {
+			if dobTime, err = time.Parse(format, *user.DOB); err == nil {
 				break
 			}
 		}
-
 		if err != nil {
 			return 0, fmt.Errorf("failed to parse DOB: %v", err)
 		}
-
 		now := time.Now()
 		currentAge = now.Year() - dobTime.Year()
 		if now.Month() < dobTime.Month() || (now.Month() == dobTime.Month() && now.Day() < dobTime.Day()) {
@@ -1028,7 +861,6 @@ func (w *predictionJobWorker) calculateSmokingStatus(userID uint) (int, error) {
 
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -56)
-
 	recentActivities, err := w.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "smoke", startDate, endDate)
 	if err != nil {
 		return 0, err
@@ -1037,84 +869,76 @@ func (w *predictionJobWorker) calculateSmokingStatus(userID uint) (int, error) {
 	if (profile.AgeOfSmoking == nil || *profile.AgeOfSmoking == 0) && len(recentActivities) == 0 {
 		return 0, nil
 	}
-
 	if profile.AgeOfSmoking != nil && *profile.AgeOfSmoking != 0 && (profile.AgeOfStopSmoking == nil || *profile.AgeOfStopSmoking == 0) {
 		return 2, nil
 	}
-
 	if len(recentActivities) > 0 {
 		return 2, nil
 	}
-
 	if profile.AgeOfSmoking != nil && *profile.AgeOfSmoking != 0 &&
 		profile.AgeOfStopSmoking != nil && *profile.AgeOfStopSmoking != 0 &&
 		currentAge > *profile.AgeOfStopSmoking {
 		return 1, nil
 	}
-
 	return 0, nil
 }
 
 func (w *predictionJobWorker) calculateBrinkmanIndex(user *models.User, profile *models.UserProfile, avgSmokeCount int) (int, error) {
 	now := time.Now()
-
 	ageOfSmoking := 0
 	if profile.AgeOfSmoking != nil {
 		ageOfSmoking = *profile.AgeOfSmoking
 	}
-
 	yearsOfSmoking := 0
-
 	if profile.AgeOfStopSmoking != nil && *profile.AgeOfStopSmoking != 0 {
+		// Case 1: User has stopped smoking. Duration is fixed.
 		yearsOfSmoking = *profile.AgeOfStopSmoking - ageOfSmoking
 	} else {
+		// Case 2: User is still smoking. Calculate duration up to their current age.
 		if user.DOB == nil {
 			return 0, fmt.Errorf("date of birth is required")
 		}
-
 		dob, err := time.Parse(time.RFC3339, *user.DOB)
 		if err != nil {
-			return 0, fmt.Errorf("invalid date of birth format: %v", err)
+			dob, err = time.Parse("2006-01-02", *user.DOB)
+			if err != nil {
+				return 0, fmt.Errorf("invalid date of birth format: %v", err)
+			}
 		}
-
 		age := now.Year() - dob.Year()
 		if now.Month() < dob.Month() || (now.Month() == dob.Month() && now.Day() < dob.Day()) {
 			age--
 		}
-
 		yearsOfSmoking = age - ageOfSmoking
 	}
 
 	if yearsOfSmoking < 0 {
 		yearsOfSmoking = 0
 	}
-
-	brinkmanIndex := yearsOfSmoking * avgSmokeCount
-
+	rawBrinkmanIndex := yearsOfSmoking * avgSmokeCount
+	var categorizedIndex int
 	switch {
-	case brinkmanIndex <= 0:
-		return 0, nil
-	case brinkmanIndex < 200:
-		return 1, nil
-	case brinkmanIndex < 600:
-		return 2, nil
+	case rawBrinkmanIndex <= 0:
+		categorizedIndex = 0
+	case rawBrinkmanIndex < 200:
+		categorizedIndex = 1
+	case rawBrinkmanIndex < 600:
+		categorizedIndex = 2
 	default:
-		return 3, nil
+		categorizedIndex = 3
 	}
+	return categorizedIndex, nil
 }
 
 func (w *predictionJobWorker) calculatePhysicalActivityFrequency(userID uint, profile *models.UserProfile) (int, error) {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -7)
-
 	var totalFrequency int
-
 	if profile.CreatedAt.Before(startDate) {
 		activities, err := w.activityRepo.GetActivitiesByUserIDAndTypeAndDateRange(userID, "workout", startDate, endDate)
 		if err != nil {
 			return 0, err
 		}
-
 		totalFrequency = 0
 		for _, activity := range activities {
 			totalFrequency += activity.Value
@@ -1122,11 +946,9 @@ func (w *predictionJobWorker) calculatePhysicalActivityFrequency(userID uint, pr
 	} else if profile.PhysicalActivityFrequency != nil {
 		totalFrequency = *profile.PhysicalActivityFrequency
 	}
-
 	return totalFrequency, nil
 }
 
-// boolToFloat converts boolean to float64 (1.0 for true, 0.0 for false)
 func (w *predictionJobWorker) boolToFloat(b bool) float64 {
 	if b {
 		return 1.0
