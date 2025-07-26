@@ -971,14 +971,14 @@ func (w *predictionJobWorker) calculateBrinkmanIndex(user *models.User, profile 
 
 	yearsOfSmoking := 0
 
-	if profile.AgeOfStopSmoking != nil {
+	if profile.AgeOfStopSmoking != nil && *profile.AgeOfStopSmoking != 0 {
 		yearsOfSmoking = *profile.AgeOfStopSmoking - ageOfSmoking
 	} else {
 		if user.DOB == nil {
 			return 0, fmt.Errorf("date of birth is required")
 		}
 
-		dob, err := time.Parse("2006-01-02", *user.DOB)
+		dob, err := time.Parse(time.RFC3339, *user.DOB)
 		if err != nil {
 			return 0, fmt.Errorf("invalid date of birth format: %v", err)
 		}
